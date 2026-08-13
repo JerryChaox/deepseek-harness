@@ -36,6 +36,7 @@ const CODE_MODE_WORKSPACE_CONTEXT_CONFIG = fileURLToPath(new URL('../code-mode-w
 const BOTH_MODE_CONFIG = fileURLToPath(new URL('../both-mode.cordis.yml', import.meta.url))
 const WORKSPACE_CONTEXT_CONFIG = fileURLToPath(new URL('../agent-instructions.cordis.yml', import.meta.url))
 const ADVANCED_CONFIG = fileURLToPath(new URL('../advanced.cordis.yml', import.meta.url))
+const ADVANCED_SPILL_CONFIG = fileURLToPath(new URL('../advanced-spill.cordis.yml', import.meta.url))
 const FS_CONFIG = fileURLToPath(new URL('../fs.cordis.yml', import.meta.url))
 const SESSION_QUERY_CONFIG = fileURLToPath(new URL('../session-query.cordis.yml', import.meta.url))
 const IMAGE_CONFIG = fileURLToPath(new URL('../image.cordis.yml', import.meta.url))
@@ -509,6 +510,15 @@ const SCENARIOS: Scenario[] = [
     recorded: false,
     headerClass: 'advanced',
     configPath: ADVANCED_CONFIG,
+  },
+  // The same real Cordis inspection tool, under the spill stack, proves that
+  // declarative JSON results stay valid on disk and expose their root schema.
+  {
+    name: 'cordis-json-spill',
+    hasModelTurn: true,
+    recorded: false,
+    headerClass: 'advanced',
+    configPath: ADVANCED_SPILL_CONFIG,
   },
   // Prompt-submit blocks are authored keylessly with malformed matcher fields,
   // which these matcherless events must ignore. Admission rejects before a turn

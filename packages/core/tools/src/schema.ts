@@ -3,7 +3,9 @@
 import { HarnessError } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-session'
-import type { ToolDefinition, ToolExecution, ToolExecutionResult, ToolRunContext, ToolResult } from './index.ts'
+import type {
+  JsonOutputRenderer, ToolDefinition, ToolExecution, ToolExecutionResult, ToolRunContext, ToolResult,
+} from './index.ts'
 import { assertSupportedJsonSchema, isJsonSchemaRecord, isPlainJsonArray, JsonSchemaError, validateJsonSchemaValue } from './json-schema.ts'
 import type { JsonSchemaNode, JsonSchemaScalar, ObjectJsonSchema } from './json-schema.ts'
 import type { ToolCallView, ToolResultView } from './presentation.ts'
@@ -491,8 +493,8 @@ export interface DefineToolOptions<S extends ParameterSchemaSpec, O extends Valu
   readonly output: {
     /** Schema enforced against every successful body or policy-replaced value. */
     readonly schema: O
-    /** Pure Native/model rendering of one validated canonical value. */
-    render(args: InferArgs<S>, value: InferValue<NoInfer<O>>): ContentBlock[]
+    /** Custom Native/model rendering, or declarative canonical JSON rendering. */
+    readonly render: ((args: InferArgs<S>, value: InferValue<NoInfer<O>>) => ContentBlock[]) | JsonOutputRenderer
     /** Pure replayable presentation metadata for direct top-level calls. */
     presentationMeta?(args: InferArgs<S>, value: InferValue<NoInfer<O>>): JsonValue
   }
@@ -550,7 +552,6 @@ export function defineTool<const S extends ParameterSchemaSpec, const O extends 
   const userExecute = options.execute
   // oxlint-disable-next-line typescript/unbound-method
   const userFinalizeContent = options.finalizeContent
-  // oxlint-disable-next-line typescript/unbound-method
   const userRender = options.output.render
   // oxlint-disable-next-line typescript/unbound-method
   const userPresentationMeta = options.output.presentationMeta
@@ -572,9 +573,14 @@ export function defineTool<const S extends ParameterSchemaSpec, const O extends 
     parameters: parameters as unknown as Record<string, unknown>,
     output: {
       schema: outputSchema,
-      render(args: unknown, value: JsonValue): ContentBlock[] {
-        return userRender(args as InferArgs<S>, value as unknown as InferValue<NoInfer<O>>)
-      },
+      render: typeof userRender === 'function'
+        ? (args: unknown, value: JsonValue): ContentBlock[] =>
+          userRender(args as InferArgs<S>, value as unknown as InferValue<NoInfer<O>>)
+        : (_args: unknown, value: JsonValue): ContentBlock[] => [{
+          type: 'text',
+          text: JSON.stringify(value, null, userRender.space),
+        }],
+      ...typeof userRender === 'function' ? {} : { projection: userRender },
       ...userPresentationMeta !== undefined ? {
         presentationMeta(args: unknown, value: JsonValue): JsonValue {
           return userPresentationMeta(args as InferArgs<S>, value as unknown as InferValue<NoInfer<O>>)

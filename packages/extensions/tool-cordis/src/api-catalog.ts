@@ -1902,6 +1902,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the exact disposer that unregisters the tool.',
       },
       {
+        signature: 'outputProjection(exec: ToolExecution): Readonly<ToolOutputProjection> | undefined',
+        description: 'Read the declarative projection that produced one execution\'s current canonical result. Custom renderers return `undefined`; callers must discard this information when policy replaces content.',
+        parameters: [{ name: 'exec', description: 'a registry-minted execution currently traversing the tool pipeline.' }],
+        returns: 'the output projection captured while validating and rendering its successful value.',
+      },
+      {
         signature: 'restrict(filter: ToolRestriction): () => void',
         description: 'Restrict global tools for the calling agent scope. Empty filters, unknown names, scope-local names, and reserved transport names fail. Restrictions intersect; scoped registrations remain visible.',
         parameters: [{ name: 'filter', description: 'global-tool mask: `allow` (keep only) and/or `deny` (remove).' }],
@@ -3226,6 +3232,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type JobStatus = \'running\' | \'stopping\' | \'completed\' | \'killed\' | \'failed\';',
   },
   {
+    name: 'JsonOutputRenderer',
+    declaration: 'export interface JsonOutputRenderer {\n    readonly kind: \'json\';\n    readonly space: number;\n}',
+  },
+  {
     name: 'JsonSchemaNode',
     declaration: 'export interface JsonSchemaNode {\n    type?: JsonSchemaType;\n    oneOf?: JsonSchemaNode[];\n    properties?: Record<string, JsonSchemaNode>;\n    required?: string[];\n    additionalProperties?: boolean;\n    items?: JsonSchemaNode;\n    enum?: JsonSchemaScalar[];\n    const?: JsonSchemaScalar;\n    description?: string;\n    title?: string;\n    default?: JsonValue;\n    examples?: JsonValue;\n}',
   },
@@ -4403,7 +4413,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ToolOutputDefinition',
-    declaration: 'export interface ToolOutputDefinition {\n    readonly schema: JsonSchemaNode;\n    render(args: unknown, value: JsonValue): ContentBlock[];\n    presentationMeta?(args: unknown, value: JsonValue): JsonValue;\n}',
+    declaration: 'export interface ToolOutputDefinition {\n    readonly schema: JsonSchemaNode;\n    render(args: unknown, value: JsonValue): ContentBlock[];\n    readonly projection?: JsonOutputRenderer;\n    presentationMeta?(args: unknown, value: JsonValue): JsonValue;\n}',
+  },
+  {
+    name: 'ToolOutputProjection',
+    declaration: 'export interface ToolOutputProjection {\n    readonly kind: \'json\';\n    readonly schema: JsonSchemaNode;\n}',
   },
   {
     name: 'ToolPresentationMode',
@@ -4439,7 +4453,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ToolRuntime',
-    declaration: 'export class ToolRuntime extends Service {\n    static inject;\n    static Config: z<Config>;\n    readonly [TOOL_RUNTIME_SCHEDULER]: ToolRuntimeScheduler;\n    constructor(ctx: Context, config: Config = {});\n    presentAs(mode: ToolPresentationMode): () => void;\n    register(definition: ToolDefinition): () => void;\n    restrict(filter: ToolRestriction): () => void;\n    guard(guard: ToolGuard): () => void;\n    get(name: string, scope?: ScopeKey): ToolDefinition | undefined;\n    schemas(scope?: ScopeKey): ToolSchema[];\n    executionMode(exec: ToolExecutionInput): ToolExecutionMode;\n    async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>;\n}',
+    declaration: 'export class ToolRuntime extends Service {\n    static inject;\n    static Config: z<Config>;\n    readonly [TOOL_RUNTIME_SCHEDULER]: ToolRuntimeScheduler;\n    constructor(ctx: Context, config: Config = {});\n    presentAs(mode: ToolPresentationMode): () => void;\n    register(definition: ToolDefinition): () => void;\n    outputProjection(exec: ToolExecution): Readonly<ToolOutputProjection> | undefined;\n    restrict(filter: ToolRestriction): () => void;\n    guard(guard: ToolGuard): () => void;\n    get(name: string, scope?: ScopeKey): ToolDefinition | undefined;\n    schemas(scope?: ScopeKey): ToolSchema[];\n    executionMode(exec: ToolExecutionInput): ToolExecutionMode;\n    async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>;\n}',
   },
   {
     name: 'ToolRuntimeScheduler',

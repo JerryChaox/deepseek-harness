@@ -214,8 +214,37 @@ export interface ToolOutputDefinition {
   readonly schema: JsonSchemaNode
   /** Pure projection from validated arguments and value to Native/model content. */
   render(args: unknown, value: JsonValue): ContentBlock[]
+  /** Declarative projection retained when `render` is the canonical JSON serializer. */
+  readonly projection?: JsonOutputRenderer
   /** Pure replayable presentation projection, computed only for top-level calls. */
   presentationMeta?(args: unknown, value: JsonValue): JsonValue
+}
+
+/** Declarative JSON rendering that preserves the canonical value/schema relationship for result policy. */
+export interface JsonOutputRenderer {
+  readonly kind: 'json'
+  /** JSON indentation width; `0` emits compact JSON and `1`-`10` emit pretty JSON. */
+  readonly space: number
+}
+
+/** Execution-local description of a declarative output projection. */
+export interface ToolOutputProjection {
+  readonly kind: 'json'
+  /** The exact schema used to validate the canonical value serialized into content. */
+  readonly schema: JsonSchemaNode
+}
+
+/**
+ * Declare that a tool renders its canonical value directly as JSON.
+ * @param options - explicit JSON indentation width from `0` through `10`.
+ * @returns a frozen renderer declaration consumed by {@link ToolRuntime}.
+ */
+export function jsonRenderer(options: { readonly space: number }): JsonOutputRenderer {
+  const { space } = options
+  if (!Number.isInteger(space) || space < 0 || space > 10) {
+    throw new TypeError(`jsonRenderer: space must be an integer from 0 through 10 (got ${space})`)
+  }
+  return Object.freeze({ kind: 'json', space })
 }
 
 /** A registered tool: its schema plus the execution function. */
@@ -1039,6 +1068,7 @@ export class ToolRuntime extends Service {
     const output = (definition as Partial<ToolDefinition>).output
     if (output === undefined || typeof output !== 'object'
       || typeof output.render !== 'function'
+      || (output.projection !== undefined && !isJsonOutputRenderer(output.projection))
       || (output.presentationMeta !== undefined && typeof output.presentationMeta !== 'function')) {
       throw new TypeError(`tool "${name}" must declare output { schema, render, presentationMeta? }`)
     }
@@ -1059,6 +1089,16 @@ export class ToolRuntime extends Service {
       layer => layer.tools.insert(name, definition),
       { label: 'tools.register()' },
     )
+  }
+
+  /**
+   * Read the declarative projection that produced one execution's current canonical result.
+   * Custom renderers return `undefined`; callers must discard this information when policy replaces content.
+   * @param exec - a registry-minted execution currently traversing the tool pipeline.
+   * @returns the output projection captured while validating and rendering its successful value.
+   */
+  outputProjection(exec: ToolExecution): Readonly<ToolOutputProjection> | undefined {
+    return this.outputProjections.get(exec)
   }
 
   /**
@@ -1783,6 +1823,9 @@ export class ToolRuntime extends Service {
   /** Registry-normalized results and the exact dispatch that validated each value. */
   private readonly canonicalResults = new WeakMap<object, ToolExecutionToken>()
 
+  /** Declarative renderer metadata captured with the successful value it projected. */
+  private readonly outputProjections = new WeakMap<ToolExecution, ToolOutputProjection>()
+
   /** Mark one registry-normalized result as canonical only for its owning dispatch. */
   private markCanonical<T extends ToolExecutionResult>(exec: ToolExecution, result: T): T {
     this.canonicalResults.set(result, exec.token)
@@ -1798,6 +1841,9 @@ export class ToolRuntime extends Service {
     let rendered: ContentBlock[]
     try {
       rendered = tool.output.render(exec.arguments, value)
+      if (tool.output.projection?.kind === 'json') {
+        this.outputProjections.set(exec, { kind: 'json', schema: tool.output.schema })
+      }
     } catch (error: unknown) {
       throw projectionError(tool.name, 'render', error)
     }
@@ -1865,6 +1911,17 @@ export class ToolRuntime extends Service {
 /** Mint a same-process correlation token whose identity is its value. */
 function createExecutionToken(): ToolExecutionToken {
   return Symbol('dsh.tool.execution') as ToolExecutionToken
+}
+
+/** Whether a trusted raw definition supplied one supported output renderer. */
+function isJsonOutputRenderer(candidate: unknown): candidate is JsonOutputRenderer {
+  if (typeof candidate !== 'object' || candidate === null) return false
+  const renderer = candidate as Partial<JsonOutputRenderer>
+  return renderer.kind === 'json'
+    && Number.isInteger(renderer.space)
+    && renderer.space !== undefined
+    && renderer.space >= 0
+    && renderer.space <= 10
 }
 
 function toolErrorResult(error: unknown): ToolExecutionResult {

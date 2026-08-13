@@ -15,7 +15,7 @@ import { createUserMessage, CallId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
+import ToolRuntime, { defineContentToolFixture, defineTool, jsonRenderer } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { PostToolDecision, ToolExecution, ToolExecutionToken } from '@deepseek-ai/dsh-tools'
 import { SpillLocator, SpillStore } from '@deepseek-ai/dsh-spill'
@@ -183,6 +183,242 @@ describe('oversized plain-text replacement', () => {
     const result = await ctx.tools.execute(exec('mixed'))
     expect(spill?.saves).toHaveLength(0)
     expect(result.content).toHaveLength(2)
+  })
+})
+
+describe('declarative JSON replacement', () => {
+  it('stores complete canonical JSON and returns a bounded root-schema notice instead of a broken preview', async () => {
+    const { ctx, spill } = await setup({ maxInlineBytes: 300 })
+    const value = { items: ['x'.repeat(1_000)], total: 1 }
+    ctx.tools.register(defineTool({
+      name: 'structured',
+      description: 'structured',
+      parameters: {},
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            items: { type: 'array', required: true, items: { type: 'string' } },
+            total: { type: 'integer' },
+          },
+        },
+        render: jsonRenderer({ space: 2 }),
+      },
+      async execute() { return value },
+    }))
+
+    const result = await ctx.tools.execute(exec('structured'))
+    const saved = spill?.saves[0]
+    const text = textOf(result.content)
+
+    expect(saved?.suggestedName).toBe('structured.json')
+    expect(JSON.parse(saved?.content ?? '')).toEqual(value)
+    expect(text).toContain('Full JSON result (')
+    expect(text).toContain('Root output schema: object {"items": array<string>, "total"?: integer}')
+    expect(text).toContain('stored at: /spill/structured.json')
+    expect(text).not.toContain('x'.repeat(20))
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(300)
+  })
+
+  it('describes array, union, and unconstrained roots without inspecting payload structure', async () => {
+    const { ctx } = await setup({ maxInlineBytes: 250 })
+    ctx.tools.register(defineTool({
+      name: 'array-root',
+      description: 'array root',
+      parameters: {},
+      output: {
+        schema: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        render: jsonRenderer({ space: 0 }),
+      },
+      async execute() {
+        return Array.from({ length: 100 }, (_, index) => ({ index, text: 'x'.repeat(20) }))
+      },
+    }))
+    ctx.tools.register(defineTool({
+      name: 'union-root',
+      description: 'union root',
+      parameters: {},
+      output: {
+        schema: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+        render: jsonRenderer({ space: 0 }),
+      },
+      async execute() { return 'x'.repeat(1_000) },
+    }))
+    ctx.tools.register(defineTool({
+      name: 'json-root',
+      description: 'unconstrained root',
+      parameters: {},
+      output: { schema: { type: 'json' }, render: jsonRenderer({ space: 0 }) },
+      async execute() { return { text: 'x'.repeat(1_000) } },
+    }))
+    ctx.tools.register(defineTool({
+      name: 'array-json-items',
+      description: 'array with unconstrained items',
+      parameters: {},
+      output: { schema: { type: 'array' }, render: jsonRenderer({ space: 0 }) },
+      async execute() { return ['x'.repeat(1_000)] },
+    }))
+    ctx.tools.register(defineTool({
+      name: 'array-union-items',
+      description: 'array with union items',
+      parameters: {},
+      output: {
+        schema: { type: 'array', items: { oneOf: [{ type: 'string' }, { type: 'null' }] } },
+        render: jsonRenderer({ space: 0 }),
+      },
+      async execute() { return ['x'.repeat(1_000)] },
+    }))
+    ctx.tools.register(defineTool({
+      name: 'open-object-root',
+      description: 'object without declared properties',
+      parameters: {},
+      output: {
+        schema: { type: 'object', additionalProperties: true, properties: {} },
+        render: jsonRenderer({ space: 0 }),
+      },
+      async execute() { return { payload: 'x'.repeat(1_000) } },
+    }))
+
+    const arrayText = textOf((await ctx.tools.execute(exec('array-root'))).content)
+    const unionText = textOf((await ctx.tools.execute(exec('union-root'))).content)
+    const jsonText = textOf((await ctx.tools.execute(exec('json-root'))).content)
+    const arrayJsonText = textOf((await ctx.tools.execute(exec('array-json-items'))).content)
+    const arrayUnionText = textOf((await ctx.tools.execute(exec('array-union-items'))).content)
+    const openObjectText = textOf((await ctx.tools.execute(exec('open-object-root'))).content)
+
+    expect(arrayText).toContain('Root output schema: array<object>')
+    expect(unionText).toContain('Root output schema: oneOf<string | null>')
+    expect(jsonText).toContain('Root output schema: json')
+    expect(arrayJsonText).toContain('Root output schema: array<json>')
+    expect(arrayUnionText).toContain('Root output schema: array<oneOf>')
+    expect(openObjectText).toContain('Root output schema: object')
+  })
+
+  it('bounds a wide root union and falls back to its root label when no branch fits', async () => {
+    const branches = [
+      {
+        type: 'object',
+        additionalProperties: false,
+        properties: { payload: { type: 'string', required: true } },
+      },
+      { type: 'string', const: 'other-0' },
+      { type: 'string', const: 'other-1' },
+      { type: 'string', const: 'other-2' },
+      { type: 'string', const: 'other-3' },
+      { type: 'string', const: 'other-4' },
+      { type: 'string', const: 'other-5' },
+      { type: 'string', const: 'other-6' },
+      { type: 'string', const: 'other-7' },
+      { type: 'string', const: 'other-8' },
+      { type: 'string', const: 'other-9' },
+      { type: 'string', const: 'other-10' },
+      { type: 'string', const: 'other-11' },
+    ] as const
+    const { ctx } = await setup({ maxInlineBytes: 210 })
+    ctx.tools.register(defineTool({
+      name: 'wide-union',
+      description: 'wide union',
+      parameters: {},
+      output: { schema: { oneOf: branches }, render: jsonRenderer({ space: 0 }) },
+      async execute() { return { payload: 'x'.repeat(1_000) } },
+    }))
+    const bounded = textOf((await ctx.tools.execute(exec('wide-union'))).content)
+    expect(bounded).toContain('Root output schema: oneOf<object | string')
+    expect(bounded).toContain('| …>')
+
+    const { ctx: narrowCtx } = await setup({ maxInlineBytes: 130 })
+    narrowCtx.tools.register(defineTool({
+      name: 'narrow-union',
+      description: 'narrow union',
+      parameters: {},
+      output: { schema: { oneOf: branches }, render: jsonRenderer({ space: 0 }) },
+      async execute() { return { payload: 'x'.repeat(1_000) } },
+    }))
+    const rootOnly = textOf((await narrowCtx.tools.execute(exec('narrow-union'))).content)
+    expect(rootOnly).toContain('Root output schema: oneOf.')
+  })
+
+  it('abbreviates a wide root schema to the available notice budget', async () => {
+    const { ctx } = await setup({ maxInlineBytes: 180 })
+    ctx.tools.register(defineTool({
+      name: 'wide',
+      description: 'wide',
+      parameters: {},
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            alpha: { type: 'string', required: true },
+            beta: { type: 'string', required: true },
+            gamma: { type: 'string', required: true },
+            delta: { type: 'string', required: true },
+          },
+        },
+        render: jsonRenderer({ space: 0 }),
+      },
+      async execute() {
+        return { alpha: 'x'.repeat(1_000), beta: 'b', gamma: 'g', delta: 'd' }
+      },
+    }))
+
+    const text = textOf((await ctx.tools.execute(exec('wide'))).content)
+
+    expect(text).toContain('Root output schema: object {')
+    expect(text).toContain('…}')
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(180)
+
+    const { ctx: longKeyCtx } = await setup({ maxInlineBytes: 180 })
+    const longKey = `field_${'x'.repeat(200)}`
+    longKeyCtx.tools.register(defineTool({
+      name: 'long-first-field',
+      description: 'long first field',
+      parameters: {},
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: { [longKey]: { type: 'string', required: true } },
+        },
+        render: jsonRenderer({ space: 0 }),
+      },
+      async execute() { return { [longKey]: 'x'.repeat(1_000) } },
+    }))
+    expect(textOf((await longKeyCtx.tools.execute(exec('long-first-field'))).content))
+      .toContain('Root output schema: object.')
+  })
+
+  it('keeps the complete inline JSON when even the minimal schema notice cannot fit', async () => {
+    const { ctx, spill } = await setup({ maxInlineBytes: 8 })
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    ctx.tools.register(defineTool({
+      name: 'tiny-cap-json',
+      description: 'tiny cap',
+      parameters: {},
+      output: { schema: { type: 'string' }, render: jsonRenderer({ space: 0 }) },
+      async execute() { return 'x'.repeat(1_000) },
+    }))
+
+    const result = await ctx.tools.execute(exec('tiny-cap-json'))
+
+    expect(textOf(result.content)).toBe(JSON.stringify('x'.repeat(1_000)))
+    expect(spill?.saves[0]?.suggestedName).toBe('tiny-cap-json.json')
+    expect(warn).toHaveBeenCalled()
+  })
+
+  it('keeps declarative JSON inline when its spill cannot be saved', async () => {
+    const { ctx } = await setup({ maxInlineBytes: 100 }, false)
+    ctx.tools.register(defineTool({
+      name: 'json-without-store',
+      description: 'json without store',
+      parameters: {},
+      output: { schema: { type: 'string' }, render: jsonRenderer({ space: 0 }) },
+      async execute() { return 'x'.repeat(1_000) },
+    }))
+
+    expect(textOf((await ctx.tools.execute(exec('json-without-store'))).content))
+      .toBe(JSON.stringify('x'.repeat(1_000)))
   })
 })
 

@@ -25,6 +25,7 @@ tools:
 - `ctx.tools.guard(guard: ToolGuard): () => void`：在 `tools/pre-execute` 之后注册单调同步执行守卫：返回理由会拒绝调用，返回 `undefined` 则保持原决定。普通上下文守卫全局生效；`agent.ctx` 守卫只对该 agent 生效。后续 waterfall（瀑布式事件）监听器无法将守卫的拒绝重新变为允许。随调用 fiber dispose。
 - `ctx.tools.execute(exec)`：以无损方式快照并冻结参数，分配不透明 token，运行完整的策略／分发／结果流水线，然后在最终观测前独立快照权威结果。无效参数会进入同一结果路径，但不会到达策略或工具主体。环绕包装层只能替换 `signal`；注册表会在进入工具主体之前，立即将调用方的原始信号重新合并到当前信号中。
 - `ctx.tools.executionMode(exec)`：返回 `parallel` 的唯一条件是可见定义的 `isConcurrencySafe(exec.arguments)` 分类器恰好返回 `true`；未知、隐藏、未声明、无效或抛出异常的分类结果均为独占。
+- `ctx.tools.outputProjection(exec)`：当已解析输出声明使用内置 renderer 时，返回执行期局部的结构化投影元数据。目前 `{ kind: 'json', schema }` 标识由 `jsonRenderer` 渲染的结果；自定义 render 函数返回 `undefined`。策略可据此特化呈现，无需解析渲染文本或根据内容猜测。
 
 ### 注入的服务
 
@@ -40,7 +41,7 @@ tools:
 
 ### 关键类型
 
-- `ToolDefinition`：`ToolSchema` + 必填的 `output { schema, render, presentationMeta? }` + `execute(args, exec)`，以及可选的最终内容回调、呈现回调、协作式 `timeoutMs` 和逐调用的 `isConcurrencySafe(args)` 分类器。主体只能返回输出 schema 声明的规范 JSON 值，并通过 `exec.signal` 协作停止。`finalizeContent(exec, result)` 对每个规范化结果都恰好运行一次，包括绕过后置策略的失败，并且只能替换 `content`；它必须是同步且对所有输入都有定义的函数。
+- `ToolDefinition`：`ToolSchema` + 必填的 `output { schema, render, presentationMeta? }` + `execute(args, exec)`，以及可选的最终内容回调、呈现回调、协作式 `timeoutMs` 和逐调用的 `isConcurrencySafe(args)` 分类器。`render` 可以是自定义函数，也可以是 `jsonRenderer({ space })`；后者序列化规范值，并让执行策略取得其声明式 schema。主体只能返回输出 schema 声明的规范 JSON 值，并通过 `exec.signal` 协作停止。`finalizeContent(exec, result)` 对每个规范化结果都恰好运行一次，包括绕过后置策略的失败，并且只能替换 `content`；它必须是同步且对所有输入都有定义的函数。
 - `ToolExecutionInput`：调用方提供的调用描述：`{ callId, name, arguments, signal, agent?, parent? }`；`signal` 必填且只读，调用方可以将外层执行的不透明 token 作为 `parent` 传入，但绝不能选择新执行自身的 token。
 - `ToolExecutionToken`：注册表分配的全新带品牌 `Symbol`。它只支持通过相等性进行关联，绝不会跨越模型、日志或 worker 边界。
 - `ToolExecution`：只读流水线视图：不可变的 `{ token, callId, name, arguments, signal, agent?, parent? }`；注册表会另行保留并重新融合调用方的原始信号。`ToolDispatchExecution` 是仅供 `tools/execute` 使用的视图，其必填信号可变，因此包装层可以替换并还原它，但不能删除它。嵌套调用的 `parent` 是 `ToolExecutionToken`，而不是执行对象。
@@ -95,6 +96,8 @@ ctx.tools.register(defineTool({
 `defineTool` 定义会在执行前验证模型参数，并把缺失必填值、基本类型错误、无效枚举成员和嵌套违规转换为 `ToolArgsError`（`INVALID_ARGS`），进入普通错误结果路径。它还会根据 `output.schema` 推断主体返回类型和纯输出投影器；注册表在呈现前快照并验证返回的无损 JSON。隐式参数根是开放的；显式对象只有在设置 `additionalProperties: true` 时才接受额外键，而没有声明属性的封闭对象只接受 `{}`。原始 JSON Schema 对象保持开放，除非显式设置 `additionalProperties: false`。系统不会应用默认值；没有 `properties` 的开放对象和没有 `items` 的数组只接受容器类型检查。通过原始方式注册的工具负责输入验证，但仍需声明输出，并由注册表强制校验输出。
 
 有关详细信息，请参阅公开 API 中的 `defineTool`、`validateArgs`、`ToolArgsError`、`ValueSchemaSpec`、`ParameterSchemaSpec`、`InferValue`、`InferArgs`、`valueSchemaSpecToJsonSchema` 和 `parameterSchemaSpecToJsonSchema`。
+
+当 JSON 文本就是预期的面向模型呈现时，使用 `jsonRenderer({ space: 0 | 2 })`。这一选择是显式声明，而不是内容推断：任意自定义 renderer 也可能输出看起来像 JSON 的文本；声明式 JSON renderer 则保留经过验证的规范值与 `output.schema` 之间的关系。spill 策略会复用这层关系，把超限结果保存为合法 JSON，并在不重新解析渲染字符串的情况下描述其根结构。
 
 可选的 `timeoutMs` 必须为正数且为有限值；它是策略元数据，不是模型可见的 schema。
 

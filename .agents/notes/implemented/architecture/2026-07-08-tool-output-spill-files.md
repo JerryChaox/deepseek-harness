@@ -92,6 +92,8 @@ If `ctx.spillStore.saveText()` fails (permissions, ENOSPC, backend unavailable),
 
 The policy skips `read` to avoid a circular `read -> spill file -> read again` loop. Additional opt-out configuration is deferred until a real second tool needs it.
 
+The later [declarative JSON result spill decision](../feature/2026-08-14-declarative-json-result-spill.md) partially specializes this policy without changing its storage seam: tools that explicitly select `jsonRenderer` save the same complete formatted text with a `.json` suggested name and receive a schema-aware notice instead of a head/tail preview. Custom renderers retain the generic behavior above.
+
 ## Showcase: web_fetch
 
 `web_fetch` is the first showcase because it returns a naturally large text result and needs no tool-specific spill code. The tool is ordinary:
@@ -178,9 +180,9 @@ Returning real paths from the local backend keeps v1 simple and matches proven a
 
 The local-backend value proposition depends on the existing `read`/`grep` tools being able to inspect the returned local path, even when the spill directory is outside the session cwd. That holds today because the filesystem policy records observations and write guards but does not confine reads to the workspace. A future workspace-confinement policy must either allow local spill paths explicitly or use a non-file spill backend whose retrieval hint points at a supported reader.
 
-**Snapshot gap.** No ACP snapshot scenario covers the transcript-visible `web_fetch` spill notice yet. The ACP snapshot harness replays keyless and cannot hit the live web, and a `web_fetch` spill requires a real over-cap HTTP body; a deterministic scenario would need a seeded loopback fetch target the replay tree does not currently wire (the examples do not load `tool-web` at all). The behavior is covered instead by the `dsh-tool-web` integration test against a loopback server. Closing the gap is follow-up work: wire `tool-web` + a seeded fetch target into the ACP example, then record a `web-fetch-spill` scenario.
+**Snapshot gap.** No ACP snapshot scenario covers the transcript-visible `web_fetch` spill notice yet. The ACP snapshot harness replays keyless and cannot hit the live web, and a `web_fetch` spill requires a real over-cap HTTP body; a deterministic scenario would need a seeded loopback fetch target the replay tree does not currently wire (the examples do not load `tool-web` at all). The behavior is covered instead by the `dsh-tool-web` integration test against a loopback server. The declarative JSON specialization does have an ACP snapshot: `cordis-json-spill` boots the real Cordis inspection tool with the local spill stack. Closing the remaining gap is follow-up work: wire `tool-web` + a seeded fetch target into the ACP example, then record a `web-fetch-spill` scenario.
 
-The policy can become too large if it starts owning tool-specific semantics. It stays narrow: plain-text final results only. Tool-owned early spill remains future work.
+The policy can become too large if it starts owning tool-specific semantics. It stays narrow: generic all-text retention plus one renderer-declared JSON specialization; it does not probe content or inspect tool names. Tool-owned early spill remains future work.
 
 ## Alternatives considered
 

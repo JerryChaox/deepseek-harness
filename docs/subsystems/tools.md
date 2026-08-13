@@ -17,8 +17,28 @@ interface ToolOutputDefinition {
   readonly schema: JsonSchemaNode
   /** Pure projection from validated arguments and value to Native/model content. */
   render(args: unknown, value: JsonValue): ContentBlock[]
+  /** Declarative projection retained when `render` is the canonical JSON serializer. */
+  readonly projection?: JsonOutputRenderer
   /** Pure replayable presentation projection, computed only for top-level calls. */
   presentationMeta?(args: unknown, value: JsonValue): JsonValue
+}
+```
+
+```ts type-equiv
+/** Declarative JSON rendering that preserves the canonical value/schema relationship for result policy. */
+interface JsonOutputRenderer {
+  readonly kind: 'json'
+  /** JSON indentation width; `0` emits compact JSON and `1`-`10` emit pretty JSON. */
+  readonly space: number
+}
+```
+
+```ts type-equiv
+/** Execution-local description of a declarative output projection. */
+interface ToolOutputProjection {
+  readonly kind: 'json'
+  /** The exact schema used to validate the canonical value serialized into content. */
+  readonly schema: JsonSchemaNode
 }
 ```
 
@@ -504,6 +524,14 @@ presentAs(mode: ToolPresentationMode): () => void
 register(definition: ToolDefinition): () => void
 
 /**
+ * Read the declarative projection that produced one execution's current canonical result.
+ * Custom renderers return `undefined`; callers must discard this information when policy replaces content.
+ * @param exec - a registry-minted execution currently traversing the tool pipeline.
+ * @returns the output projection captured while validating and rendering its successful value.
+ */
+outputProjection(exec: ToolExecution): Readonly<ToolOutputProjection> | undefined
+
+/**
  * Restrict global tools for the calling agent scope. Empty filters, unknown
  * names, scope-local names, and reserved transport names fail. Restrictions
  * intersect; scoped registrations remain visible.
@@ -571,7 +599,7 @@ async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>
 
 Types: [ScopeKey](scope.md)
 
-Source: [`packages/core/tools/src/index.ts:787`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:816`](../../packages/core/tools/src/index.ts)
 
 <a id="tools-events"></a>
 

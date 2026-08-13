@@ -1,11 +1,12 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { createUserMessage, CallId, HarnessError, type ContentBlock  } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, CallId, HarnessError, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import ApprovalService, { type ApprovalOutcome, type ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import ToolRuntime, {
-  defineContentToolFixture, defineTool, JsonSchemaError, parameterSchemaSpecToJsonSchema, validateArgs, ToolArgsError, ToolNotFoundError,
+  defineContentToolFixture, defineTool, jsonRenderer, JsonSchemaError,
+  parameterSchemaSpecToJsonSchema, validateArgs, ToolArgsError, ToolNotFoundError,
   TOOL_ABORTED, TOOL_ABORTED_BEFORE_DISPATCH,
   type InferArgs, type JsonValue, type ParameterSchemaSpec, type PreToolDecision, type PostToolDecision,
   type JsonSchemaNode, type ToolDefinition, type ToolDispatchExecution, type ToolExecutionResult, type ToolExecutionToken,
@@ -91,6 +92,61 @@ describe('ToolRuntime', () => {
     const result = await ctx.tools.execute({ signal: testToolSignal, callId: CallId('c1'), name: 'echo', arguments: { text: 'hi' } })
     expect(result).toEqual({ content: [{ type: 'text', text: 'hi' }], isError: false, value: 'hi' })
     expect(observed).toEqual(result)
+  })
+
+  it('renders canonical JSON declaratively and exposes its validated output schema during policy', async () => {
+    const ctx = await setup()
+    const schema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: { items: { type: 'array', required: true, items: { type: 'integer' } } },
+    } as const
+    ctx.tools.register(defineTool({
+      name: 'json-output',
+      description: 'json output',
+      parameters: {},
+      output: { schema, render: jsonRenderer({ space: 2 }) },
+      async execute() { return { items: [1, 2] } },
+    }))
+    let projection: unknown
+    ctx.on('tools/post-execute', async (exec, _result, next) => {
+      projection = ctx.tools.outputProjection(exec)
+      return next()
+    })
+
+    const result = await ctx.tools.execute({
+      signal: testToolSignal, callId: CallId('json-output'), name: 'json-output', arguments: {},
+    })
+
+    expect(result.content).toEqual([{ type: 'text', text: '{\n  "items": [\n    1,\n    2\n  ]\n}' }])
+    expect(projection).toEqual({ kind: 'json', schema: {
+      type: 'object', additionalProperties: false,
+      properties: { items: { type: 'array', items: { type: 'integer' } } }, required: ['items'],
+    } })
+  })
+
+  it('validates declarative JSON renderer indentation and raw projection declarations', async () => {
+    expect(() => jsonRenderer({ space: -1 })).toThrow(/integer from 0 through 10/)
+    expect(() => jsonRenderer({ space: 11 })).toThrow(/integer from 0 through 10/)
+    expect(() => jsonRenderer({ space: 1.5 })).toThrow(/integer from 0 through 10/)
+    expect(jsonRenderer({ space: 0 })).toEqual({ kind: 'json', space: 0 })
+
+    const ctx = await setup()
+    expect(() => ctx.tools.register({
+      ...echoTool,
+      name: 'bad-json-projection',
+      output: { ...echoTool.output, projection: { kind: 'json', space: 20 } },
+    } as unknown as ToolDefinition)).toThrow(/must declare output/)
+    expect(() => ctx.tools.register({
+      ...echoTool,
+      name: 'null-json-projection',
+      output: { ...echoTool.output, projection: null },
+    } as unknown as ToolDefinition)).toThrow(/must declare output/)
+    expect(() => ctx.tools.register({
+      ...echoTool,
+      name: 'scalar-json-projection',
+      output: { ...echoTool.output, projection: 'json' },
+    } as unknown as ToolDefinition)).toThrow(/must declare output/)
   })
 
   it('projects presentation metadata from the canonical value', async () => {

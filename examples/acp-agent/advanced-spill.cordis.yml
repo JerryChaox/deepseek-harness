@@ -1,0 +1,16 @@
+# Add local result spilling to the real advanced composition so JSON-aware
+# renderer behavior is exercised through the shipped Cordis inspection tool.
+- id: base
+  name: '@deepseek-ai/cordis-plugin-include'
+  config:
+    path: ./advanced.cordis.yml
+    patches:
+      - insert:
+          - id: spill-local
+            name: '@deepseek-ai/dsh-spill-local'
+            config:
+              root: !!js process.env.DSH_SNAPSHOT_SPILL_ROOT ?? './.spill'
+          - id: spill-policy
+            name: '@deepseek-ai/dsh-spill-policy'
+            config:
+              maxInlineBytes: !!js process.env.DSH_SNAPSHOT && 800 || 50000
