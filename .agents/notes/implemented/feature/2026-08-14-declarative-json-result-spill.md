@@ -37,5 +37,5 @@ The shipped goal tools and Cordis inspection tools adopt `jsonRenderer`. The ACP
 - Oversized declared JSON remains complete and parseable at its locator; the model no longer receives a syntactically broken fragment as its preview.
 - The policy reuses the tool's output schema and performs no JSON probe. An unconstrained `json` schema is reported honestly as `json` rather than inferred from one runtime sample.
 - Opt-in is explicit. Existing tools and third-party custom renderers do not change until they select `jsonRenderer`.
-- This change does not reduce the peak memory required to stringify a large value: rendering still materializes the complete JSON string before post-execute spill. Streaming serialization is a separate architectural optimization so its memory and file-publication trade-offs can be reviewed independently.
+- The base renderer retains ordinary whole-string behavior. The [streamed JSON spill decision](../architecture/2026-08-14-atomic-streamed-json-spill.md) lets the spill policy intercept this explicit projection before materialization, while other consumers and fallback paths keep the ordinary renderer.
 - Code Mode nested dispatch logs keep their existing generic text spill behavior. The execution-local projection is intentionally not added to the durable dispatch-log contract in this decision.

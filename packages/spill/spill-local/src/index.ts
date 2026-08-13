@@ -12,11 +12,11 @@ import { Context } from '@deepseek-ai/cordis'
 import { resolve } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import { SpillLocator, SpillStore } from '@deepseek-ai/dsh-spill'
-import type { SaveTextSpill, SpillRef } from '@deepseek-ai/dsh-spill'
-import { privateRoot, saveTextFile } from './store.ts'
+import type { SaveTextSpill, SaveTextStreamSpill, SpillRef } from '@deepseek-ai/dsh-spill'
+import { privateRoot, saveTextFile, saveTextStreamFile } from './store.ts'
 
-export { encodeSegment, privateRoot, saveTextFile, sessionDir } from './store.ts'
-export type { SavedText, SaveTextOptions } from './store.ts'
+export { encodeSegment, privateRoot, saveTextFile, saveTextStreamFile, sessionDir } from './store.ts'
+export type { SavedText, SaveTextOptions, SaveTextStreamOptions } from './store.ts'
 
 /** Plugin config (all optional — `static Config` supplies the defaults). */
 export interface Config {
@@ -49,6 +49,20 @@ export class LocalSpillStore extends SpillStore {
 
   async saveText(input: SaveTextSpill): Promise<SpillRef> {
     const saved = await saveTextFile({
+      root: this.root,
+      sessionId: input.owner.sessionId,
+      suggestedName: input.suggestedName,
+      content: input.content,
+    })
+    return {
+      locator: SpillLocator(saved.path),
+      bytes: saved.bytes,
+      retrievalHint: 'Use read with offset/limit, or grep this path to search within it.',
+    }
+  }
+
+  override async saveTextStream(input: SaveTextStreamSpill): Promise<SpillRef> {
+    const saved = await saveTextStreamFile({
       root: this.root,
       sessionId: input.owner.sessionId,
       suggestedName: input.suggestedName,

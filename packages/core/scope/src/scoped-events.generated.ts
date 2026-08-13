@@ -33,6 +33,7 @@ const scopedSubjectResolvers: Readonly<Record<string, ScopedSubjectResolver | nu
   'tools/execute': args => (args[0] as Record<string, unknown>)['agent'],
   'tools/post-execute': args => (args[0] as Record<string, unknown>)['agent'],
   'tools/pre-execute': args => (args[0] as Record<string, unknown>)['agent'],
+  'tools/render-json-output': args => (args[0] as Record<string, unknown>)['agent'],
   'tools/result': args => (args[0] as Record<string, unknown>)['agent'],
 })
 

@@ -26,11 +26,12 @@ There is no dedicated model-facing Consumer package. The Consumer is the existin
 
 ### Spill seam
 
-The storage seam is minimal: save text and return a locator plus retrieval hint.
+The storage seam is minimal: save materialized or streamed text and return a locator plus retrieval hint.
 
 ```ts ignore-check
 interface SpillStore {
   saveText(input: SaveTextSpill): Promise<SpillRef>
+  saveTextStream(input: SaveTextStreamSpill): Promise<SpillRef>
 }
 
 interface SpillSource {
@@ -46,6 +47,10 @@ interface SaveTextSpill {
   content: string
 }
 
+interface SaveTextStreamSpill extends Omit<SaveTextSpill, 'content'> {
+  content: Iterable<string> | AsyncIterable<string>
+}
+
 type SpillLocator = Branded<'SpillLocator'>
 
 interface SpillRef {
@@ -57,7 +62,7 @@ interface SpillRef {
 
 `SpillLocator` is a [branded](../../../../packages/util/brand) model-facing handle returned by the backend. The local backend renders it as a filesystem path; a remote or database backend can render a URI, key, or command token. Consumers treat it as opaque and render it with `retrievalHint` instead of assuming `read` is always the right retrieval mechanism. `SpillOwner.sessionId` is the save-time storage namespace: forked sessions inherit existing spill locators from the seeded log without copying or re-owning them, and new spills after the fork use the child session id. A retention-period cleanup may expire old locators with other old session artifacts; the spill seam does not define a per-session cleanup policy.
 
-`dsh-spill-local` owns only storage details: session-scoped directory selection, safe names, path-traversal protection, the write, and returning `{ locator, bytes, retrievalHint }`. It does not own retention policy, tool-result replacement, search, or file inspection. Files land at `<root>/session-<hash>/<random>-<safeName>`, where `root` is a configured path or a lazily-created private (0700) per-process temp dir, the session subdir is a short `sha256(sessionId)` prefix, and the leaf is a random hex prefix plus the caller's `suggestedName` sanitized to one path segment (mirrors the JSONL backend's `encodeSegment`). The write is `open(path, 'wx', 0o600)` — exclusive and owner-only, so a planted symlink cannot redirect it. The locator is the path, and the retrieval hint tells the model it can use `read` or `grep` on that path.
+`dsh-spill-local` owns only storage details: session-scoped directory selection, safe names, path-traversal protection, atomic publication, and returning `{ locator, bytes, retrievalHint }`. It does not own retention policy, tool-result replacement, search, or file inspection. Files land at `<root>/session-<hash>/<random>-<safeName>`, where `root` is a configured path or a lazily-created private (0700) per-process temp dir, the session subdir is a short `sha256(sessionId)` prefix, and the leaf is a random hex prefix plus the caller's `suggestedName` sanitized to one path segment (mirrors the JSONL backend's `encodeSegment`). The backend writes an owner-only temporary inode, closes it, and publishes the final locator through a no-clobber hard link, so readers never observe a partial final file. The locator is the path, and the retrieval hint tells the model it can use `read` or `grep` on that path.
 
 ### Spill policy
 
@@ -92,7 +97,7 @@ If `ctx.spillStore.saveText()` fails (permissions, ENOSPC, backend unavailable),
 
 The policy skips `read` to avoid a circular `read -> spill file -> read again` loop. Additional opt-out configuration is deferred until a real second tool needs it.
 
-The later [declarative JSON result spill decision](../feature/2026-08-14-declarative-json-result-spill.md) partially specializes this policy without changing its storage seam: tools that explicitly select `jsonRenderer` save the same complete formatted text with a `.json` suggested name and receive a schema-aware notice instead of a head/tail preview. Custom renderers retain the generic behavior above.
+The later [declarative JSON result spill decision](../feature/2026-08-14-declarative-json-result-spill.md) specializes this policy: tools that explicitly select `jsonRenderer` save the same complete formatted text with a `.json` suggested name and receive a schema-aware notice instead of a head/tail preview. The [streamed JSON spill decision](2026-08-14-atomic-streamed-json-spill.md) adds a compatible streaming save operation and intercepts declared JSON before whole-string materialization. Custom renderers retain the generic behavior above.
 
 ## Showcase: web_fetch
 
@@ -166,8 +171,8 @@ Those cases can consume `ctx.spillStore` directly in later work. They are not pa
 
 ## Testing
 
-- `dsh-spill` unit tests pin the seam contract: registration as `ctx.spillStore`, one-implementation-per-context, and disposal release.
-- `dsh-spill-local` unit tests cover `saveText`, `encodeSegment` sanitization (separators/tilde/whole-segment dots/empty), the session-hash directory, owner-only permissions, distinct paths per save, the configured/private root, and a storage-failure rejection.
+- `dsh-spill` unit tests pin the seam contract: registration as `ctx.spillStore`, one-implementation-per-context, disposal release, and the collecting compatibility implementation of `saveTextStream`.
+- `dsh-spill-local` unit tests cover materialized and streamed saves, atomic final-path visibility, failed-stream cleanup, `encodeSegment` sanitization (separators/tilde/whole-segment dots/empty), the session-hash directory, owner-only permissions, distinct paths per save, the configured/private root, and a storage-failure rejection.
 - `dsh-spill-policy` unit tests drive real tools through `ctx.tools.execute`: disabled-mode no-op, oversized-text replacement, small/non-text passthrough, `read` skip, best-effort fallback (save failure / no backend / no owner), and downstream-composition (bounding a replaced result, preserving `additionalContexts`).
 - `dsh-tool-web` integration drives `web_fetch` through `ctx.tools.execute` with the real `spill-local` backend + policy, proving the model-facing text changes only by the deliberate spill notice while the spill file holds the full formatted result.
 - The `tui-agent` example loads `spill-local` + `spill-policy`, so its keyless Loader/PTY smoke exercises the real load path (the namespace-plugin export shape + `inject`).

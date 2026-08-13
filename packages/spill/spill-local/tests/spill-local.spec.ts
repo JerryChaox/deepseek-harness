@@ -8,13 +8,15 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, normalize } from 'node:path'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SaveTextSpill } from '@deepseek-ai/dsh-spill'
-import LocalSpillStore, { encodeSegment, privateRoot, saveTextFile, sessionDir } from '@deepseek-ai/dsh-spill-local'
+import LocalSpillStore, {
+  encodeSegment, privateRoot, saveTextFile, saveTextStreamFile, sessionDir,
+} from '@deepseek-ai/dsh-spill-local'
 
 let root: string
 
@@ -104,6 +106,50 @@ describe('saveTextFile', () => {
   })
 })
 
+describe('saveTextStreamFile', () => {
+  it('publishes only the complete file after the stream settles', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let firstChunk!: () => void
+    const started = new Promise<void>((resolve) => { firstChunk = resolve })
+    const saving = saveTextStreamFile({
+      root,
+      sessionId: 'stream-session',
+      suggestedName: 'result.json',
+      content: (async function* (): AsyncGenerator<string> {
+        yield '{"prefix":"'
+        firstChunk()
+        await gate
+        yield 'complete"}'
+      })(),
+    })
+
+    await started
+    const dir = sessionDir(root, 'stream-session')
+    expect(readdirSync(dir)).toHaveLength(1)
+    expect(readdirSync(dir)[0]).toMatch(/^\.tmp-/)
+
+    release()
+    const saved = await saving
+    expect(readFileSync(saved.path, 'utf8')).toBe('{"prefix":"complete"}')
+    expect(readdirSync(dir)).toEqual([basename(saved.path)])
+  })
+
+  it('removes the private temporary file when the stream fails', async () => {
+    const saving = saveTextStreamFile({
+      root,
+      sessionId: 'failed-stream',
+      suggestedName: 'result.json',
+      content: (async function* (): AsyncGenerator<string> {
+        yield 'partial'
+        throw new Error('serializer failed')
+      })(),
+    })
+    await expect(saving).rejects.toThrow('serializer failed')
+    expect(readdirSync(sessionDir(root, 'failed-stream'))).toEqual([])
+  })
+})
+
 describe('privateRoot', () => {
   it('is a stable absolute directory under the temp dir', () => {
     const first = privateRoot()
@@ -121,6 +167,20 @@ describe('LocalSpillStore service', () => {
     expect(readFileSync(ref.locator, 'utf8')).toBe('the full body')
     expect(ref.bytes).toBe(Buffer.byteLength('the full body', 'utf8'))
     expect(ref.retrievalHint).toBe('Use read with offset/limit, or grep this path to search within it.')
+  })
+
+  it('streams under the configured root', async () => {
+    const ctx = new Context()
+    await ctx.plugin(LocalSpillStore, { root })
+    const base = request()
+    const ref = await ctx.spillStore.saveTextStream({
+      owner: base.owner,
+      source: base.source,
+      suggestedName: 'result.json',
+      content: (async function* (): AsyncGenerator<string> { yield '一'; yield '二' })(),
+    })
+    expect(readFileSync(ref.locator, 'utf8')).toBe('一二')
+    expect(ref.bytes).toBe(Buffer.byteLength('一二'))
   })
 
   it('resolves a relative configured root to absolute', async () => {

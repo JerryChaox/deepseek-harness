@@ -48,11 +48,12 @@ import z from '@deepseek-ai/schemastery'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { TextRetainer, describeOmitted } from '@deepseek-ai/dsh-output-retention'
 import type { Omitted } from '@deepseek-ai/dsh-output-retention'
-import type { SaveTextSpill, SpillRef } from '@deepseek-ai/dsh-spill'
+import type { SaveTextSpill, SaveTextStreamSpill, SpillRef } from '@deepseek-ai/dsh-spill'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { CallId } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, PostToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
 import type { SpillPolicyExec } from './types.ts'
+import { streamJson } from './json-stream.ts'
 
 export type { SpillPolicyExec } from './types.ts'
 
@@ -250,21 +251,51 @@ export function apply(ctx: Context, config: Config): void {
     return replacedText
   }
 
-  /** Save one declarative JSON projection and replace it with its locator and validated root schema. */
-  async function jsonReplacement(
-    text: string,
-    totalBytes: number,
-    schema: JsonSchemaNode,
-    exec: ToolExecution,
-  ): Promise<string | undefined> {
-    const ref = await saveProjection(text, ownerSessionId(exec), exec.name, exec.callId, 'result', 'json')
-    if (ref === undefined) return undefined
-    const notice = jsonSpillNotice(totalBytes, ref, schema, cap)
+  ctx.on('tools/render-json-output', async (exec, projection, next): Promise<ContentBlock[]> => {
+    if (exec.parent !== undefined || exec.name === 'read') return next()
+    const sessionId = ownerSessionId(exec)
+    const spillStore = ctx.get('spillStore')
+    if (sessionId === undefined || spillStore === undefined) return next()
+
+    const iterator = streamJson(projection.value, projection.space)
+    const buffered: string[] = []
+    let bufferedBytes = 0
+    while (true) {
+      const item = iterator.next()
+      if (item.done) return next()
+      buffered.push(item.value)
+      bufferedBytes += Buffer.byteLength(item.value, 'utf8')
+      if (bufferedBytes > cap) break
+    }
+
+    const content = (function* (): Generator<string> {
+      yield* buffered
+      while (true) {
+        const item = iterator.next()
+        if (item.done) return
+        yield item.value
+      }
+    })()
+    const save: SaveTextStreamSpill = {
+      owner: { sessionId },
+      source: { toolName: exec.name, callId: exec.callId, label: 'result' },
+      suggestedName: `${exec.name}.json`,
+      content,
+    }
+    let ref: SpillRef
+    try {
+      ref = await spillStore.saveTextStream(save)
+    } catch (error: unknown) {
+      ctx.logger.warn(`spill-policy: saveTextStream failed for ${exec.name}: ${String(error)}; keeping the inline content`)
+      return next()
+    }
+    const notice = jsonSpillNotice(ref.bytes, ref, projection.schema, cap)
     if (notice === undefined) {
       ctx.logger.warn(`spill-policy: JSON spill notice for ${exec.name} exceeds maxInlineBytes; keeping the inline content`)
+      return next()
     }
-    return notice
-  }
+    return [{ type: 'text', text: notice }]
+  }, { prepend: true })
 
   ctx.on('tools/post-execute', async (exec, result, next): Promise<PostToolDecision> => {
     // Delegate first so a downstream listener (e.g. a hook) settles the result;
@@ -284,9 +315,13 @@ export function apply(ctx: Context, config: Config): void {
     const outputProjection = decision.content === undefined && !result.isError
       ? ctx.tools.outputProjection(exec)
       : undefined
-    const replacedText = outputProjection?.kind === 'json'
-      ? await jsonReplacement(text, totalBytes, outputProjection.schema, exec)
-      : await spillReplacement(text, totalBytes, ownerSessionId(exec), exec.name, exec.callId, 'result')
+    // Declarative JSON was already handled before whole-string rendering. A
+    // streaming/storage fallback deliberately keeps it inline instead of
+    // repeating serialization and a second save here.
+    if (outputProjection?.kind === 'json') return decision
+    const replacedText = await spillReplacement(
+      text, totalBytes, ownerSessionId(exec), exec.name, exec.callId, 'result',
+    )
     if (replacedText === undefined) return decision
     const replaced: ContentBlock[] = [{ type: 'text', text: replacedText }]
     return { kind: 'accept', content: replaced, ...decision.additionalContexts ? { additionalContexts: decision.additionalContexts } : {} }

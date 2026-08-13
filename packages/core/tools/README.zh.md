@@ -37,7 +37,7 @@ tools:
 
 ### 实时事件
 
-实时注册表流水线先经过 3 道可转换的 waterfall，再经过由工具定义持有的内容终结器，最后发布仅供观测的 `tools/result` 事件；注册表变更通知有意不作过滤，并作为共享状态通知发布。确切签名、分发 mode、作用域筛选和失败隔离约定位于 [tools.md](../../../docs/subsystems/tools.md#cordis-surface) 的生成区块，完整顺序则在生成的[工具执行流水线](../../../docs/tool-execution-pipeline.md)中可视化。`tools/result` 是实时事件；名称相近的 `tool/result` 是 agent loop 随后追加的持久会话事件。
+实时注册表流水线包含 3 道结果／控制 waterfall，另有一道处理显式声明 JSON 投影的 `tools/render-json-output`；之后经过由工具定义持有的内容终结器，最后发布仅供观测的 `tools/result` 事件。注册表变更通知有意不作过滤，并作为共享状态通知发布。确切签名、分发 mode、作用域筛选和失败隔离约定位于 [tools.md](../../../docs/subsystems/tools.md#cordis-surface) 的生成区块，完整顺序则在生成的[工具执行流水线](../../../docs/tool-execution-pipeline.md)中可视化。`tools/result` 是实时事件；名称相近的 `tool/result` 是 agent loop 随后追加的持久会话事件。
 
 ### 关键类型
 

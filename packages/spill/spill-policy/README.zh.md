@@ -26,7 +26,7 @@
    (Omitted N bytes. Full formatted result stored at: /…/session-…/…-web_fetch.txt. Use read with offset/limit, or grep this path to search within it.)
    ```
 
-   显式 JSON 结果使用 `.json`，且不会返回损坏的首尾预览。其有界通知包含 `Root output schema: ...`；该摘要直接来自已经声明的工具输出 schema，包括根类型、预算内的对象直接字段，或有界 union 摘要。策略不会解析、探测渲染文本，也不会从中推断结构。保存的文件是完整渲染 JSON。
+   显式 JSON 结果使用 `.json`，且不会返回损坏的首尾预览。在普通整串渲染之前，策略会增量序列化，只缓冲到内联上限附近，然后把剩余内容流式写入存储。其有界通知包含直接来自工具声明式输出 schema 的 `Root output schema: ...`。策略不会解析、探测渲染文本，也不会从中推断结构。保存的文件是完整渲染 JSON。
 
    当通知本身无法放入预算时（上限极小或 locator 很长），策略保留内联结果。它绝不会发出超过上限的替换内容。
 
@@ -36,7 +36,7 @@
 
 ## 范围
 
-该策略只能看到最终格式化的面向模型结果。JSON 特化可以把这段文本与本次执行中已验证的规范值和声明式 schema 对应起来，但仍无法恢复提供方更早发生的截断（例如 `web-fetch-http.maxBodyChars`）。提供方／资源上限仍然是必需的，并且与该策略相互独立。`glob`/`grep` 负责项级呈现 spill；bash 流负责获取期 spill。详见 [JSON spill 决策](../../../.agents/notes/implemented/feature/2026-08-14-declarative-json-result-spill.md)与原有的[工具输出 spill 架构](../../../.agents/notes/implemented/architecture/2026-07-08-tool-output-spill-files.md)。
+通用文本仍在最终格式化结果上运行。显式 JSON 特化则在 tools registry 的异步 renderer waterfall 中执行：规范值验证之后、内容物化之前。两条路径都无法恢复提供方更早发生的截断。提供方／资源上限仍然必需且相互独立。详见[流式 spill 决策](../../../.agents/notes/implemented/architecture/2026-08-14-atomic-streamed-json-spill.md)、[JSON spill 决策](../../../.agents/notes/implemented/feature/2026-08-14-declarative-json-result-spill.md)与原有的[工具输出 spill 架构](../../../.agents/notes/implemented/architecture/2026-07-08-tool-output-spill-files.md)。
 
 ## 模型体验
 

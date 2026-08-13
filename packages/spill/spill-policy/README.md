@@ -26,7 +26,7 @@ This plugin registers **no service** and owns no storage or preview mechanics: p
    (Omitted N bytes. Full formatted result stored at: /…/session-…/…-web_fetch.txt. Use read with offset/limit, or grep this path to search within it.)
    ```
 
-   An explicit JSON result uses `.json` and no broken head/tail preview. Its bounded notice reports `Root output schema: ...`, derived from the already-declared tool output schema: the root type, direct object fields while they fit, or a bounded union summary. It does not parse, probe, or infer from the rendered text. The stored file is the complete rendered JSON.
+   An explicit JSON result uses `.json` and no broken head/tail preview. Before ordinary whole-string rendering, the policy serializes incrementally, buffers only through the inline cap, then streams the remainder to storage. Its bounded notice reports `Root output schema: ...`, derived from the already-declared tool output schema. It does not parse, probe, or infer from rendered text. The stored file is the complete rendered JSON.
 
    When a notice alone cannot fit (a tiny cap or a long locator), the policy keeps the inline result. It never emits a replacement over the cap.
 
@@ -36,7 +36,7 @@ This plugin registers **no service** and owns no storage or preview mechanics: p
 
 ## Scope
 
-The policy sees only the FINAL formatted model-facing result. Its JSON specialization can relate that text to the execution's validated canonical value and declared schema, but it still cannot recover a provider's earlier truncation (for example `web-fetch-http.maxBodyChars`). Provider/resource caps stay mandatory and separate. `glob`/`grep` own item-level presentation spill because their complete acquired values still exist before rendering; bash streams own acquisition-time spill. See the [JSON spill decision](../../../.agents/notes/implemented/feature/2026-08-14-declarative-json-result-spill.md) and the original [tool output spill architecture](../../../.agents/notes/implemented/architecture/2026-07-08-tool-output-spill-files.md).
+Generic text still operates on the final formatted result. The explicit JSON specialization runs at the tools registry's asynchronous renderer waterfall, after canonical validation and before content materialization. Neither path can recover a provider's earlier truncation. Provider/resource caps stay mandatory and separate. See the [streaming spill decision](../../../.agents/notes/implemented/architecture/2026-08-14-atomic-streamed-json-spill.md), [JSON spill decision](../../../.agents/notes/implemented/feature/2026-08-14-declarative-json-result-spill.md), and original [tool output spill architecture](../../../.agents/notes/implemented/architecture/2026-07-08-tool-output-spill-files.md).
 
 ## Model Experience
 

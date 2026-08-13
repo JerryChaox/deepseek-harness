@@ -19,12 +19,13 @@ The split mirrors the shell/fs seams. A future remote or virtual backend (e.g. a
 | Member | Semantics |
 |---|---|
 | `saveText(input)` | Persist `input.content` verbatim; resolves with a `SpillRef` (opaque locator, exact bytes written, and retrieval hint). **Rejects on a real storage failure** (permissions, ENOSPC, backend unavailable) — the caller decides how to degrade. |
+| `saveTextStream(input)` | Persist ordered UTF-8 text chunks. The compatibility default concatenates and delegates to `saveText`; backends override it when they can consume incrementally. |
 
 Storage is grouped by the request's `owner` session as a save-time namespace; the backend chooses its own private representation and may derive names from — never trust as a path — the caller's `suggestedName`. The seam owns storage only: NO retention policy (that is [`@deepseek-ai/dsh-output-retention`](../../util/output-retention)), NO tool-result replacement (that is `@deepseek-ai/dsh-spill-policy`), NO retrieval/search API (the backend's `retrievalHint` tells the model what to do with the locator).
 
 ## Vocabulary
 
-`SaveTextSpill` (owner, source, suggestedName, content) is the request; `SpillRef` (locator, bytes, retrievalHint) is the result. `SpillLocator` is [branded](../../util/brand) and rendered to the model as an opaque string — a local path for `dsh-spill-local`, but a future backend may return a URI, key, or command token without changing policy/tool consumers. `SpillOwner.sessionId` is the save-time storage namespace: forked sessions inherit existing locators from the seeded log without copying or re-owning them, and new spills after the fork use the child session id. `SpillSource` records the producing `toolName`, `callId`, and `label` for backend naming and inspection, not access control. See `src/types.ts` for the full contracts.
+`SaveTextSpill` carries a materialized string; `SaveTextStreamSpill` carries a single-consumption async iterable. Both share owner, source, and suggested-name semantics. `SpillRef` (locator, bytes, retrievalHint) is the result. `SpillLocator` is [branded](../../util/brand) and rendered to the model as an opaque string — a local path for `dsh-spill-local`, but a future backend may return a URI, key, or command token without changing policy/tool consumers. `SpillOwner.sessionId` is the save-time storage namespace: forked sessions inherit existing locators from the seeded log without copying or re-owning them, and new spills after the fork use the child session id. `SpillSource` records the producing `toolName`, `callId`, and `label` for backend naming and inspection, not access control. See `src/types.ts` for the full contracts.
 
 See the [tool output spill Agent Note](../../../.agents/notes/implemented/architecture/2026-07-08-tool-output-spill-files.md) for the design rationale, including why creation belongs to the runtime spill seam rather than the model-facing `write` tool.
 

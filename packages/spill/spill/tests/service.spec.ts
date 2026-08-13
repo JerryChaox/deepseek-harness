@@ -44,6 +44,20 @@ describe('spill seam', () => {
     expect((ctx.spillStore as StubStore).last?.content).toBe('hello')
   })
 
+  it('provides a materializing stream compatibility path', async () => {
+    const ctx = new Context()
+    await ctx.plugin(StubStore)
+    const base = request('')
+    const ref = await ctx.spillStore.saveTextStream({
+      owner: base.owner,
+      source: base.source,
+      suggestedName: 'stream.txt',
+      content: (async function* (): AsyncGenerator<string> { yield 'hel'; yield 'lo' })(),
+    })
+    expect(ref.bytes).toBe(5)
+    expect((ctx.spillStore as StubStore).last?.content).toBe('hello')
+  })
+
   it('rejects a second implementation (one per context)', async () => {
     const ctx = new Context()
     await ctx.plugin(StubStore)
