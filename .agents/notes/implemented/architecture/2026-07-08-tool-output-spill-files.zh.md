@@ -26,11 +26,12 @@ Status: implemented
 
 ### spill seam
 
-存储 seam 保持最小化：保存文本，并返回定位符与检索提示。
+存储 seam 保持最小化：保存已物化或流式文本，并返回定位符与检索提示。
 
 ```ts ignore-check
 interface SpillStore {
   saveText(input: SaveTextSpill): Promise<SpillRef>
+  saveTextStream(input: SaveTextStreamSpill): Promise<SpillRef>
 }
 
 interface SpillSource {
@@ -46,6 +47,10 @@ interface SaveTextSpill {
   content: string
 }
 
+interface SaveTextStreamSpill extends Omit<SaveTextSpill, 'content'> {
+  content: Iterable<string> | AsyncIterable<string>
+}
+
 type SpillLocator = Branded<'SpillLocator'>
 
 interface SpillRef {
@@ -57,7 +62,7 @@ interface SpillRef {
 
 `SpillLocator` 是一个[品牌化的](../../../../packages/util/brand)模型可见句柄，由后端返回。本地后端将其渲染为文件系统路径；远程或数据库后端可以渲染 URI、键或命令 token。消费方把它视为不透明值，并使用 `retrievalHint` 渲染，而不是假定 `read` 始终是正确的检索机制。`SpillOwner.sessionId` 是保存时的存储命名空间：fork 后的会话会从种子日志继承已有的 spill 定位符，无需复制它们或重新取得所有权；fork 后的新 spill 使用子会话 id。保留期清理可以连同其他旧会话产物一起使旧定位符失效；spill seam 不定义逐会话的清理策略。
 
-`dsh-spill-local` 只负责存储细节：选择会话作用域的目录、安全名称、防止路径遍历、执行写入，以及返回 `{ locator, bytes, retrievalHint }`。它不负责保留策略、工具结果替换、搜索或文件检查。文件写入 `<root>/session-<hash>/<random>-<safeName>`：`root` 是配置路径，或延迟创建的私有（0700）进程级临时目录；会话子目录是 `sha256(sessionId)` 的短前缀；叶节点由随机十六进制前缀与调用方的 `suggestedName` 组成，后者会被清理成单一路径段（与 JSONL 后端的 `encodeSegment` 一致）。系统使用 `open(path, 'wx', 0o600)` 写入，确保独占且仅所有者可访问，因此预先植入的符号链接无法重定向写入。定位符就是该路径，检索提示则告知模型可以在该路径上使用 `read` 或 `grep`。
+`dsh-spill-local` 只负责存储细节：选择会话作用域的目录、安全名称、防止路径遍历、原子发布，以及返回 `{ locator, bytes, retrievalHint }`。它不负责保留策略、工具结果替换、搜索或文件检查。文件写入 `<root>/session-<hash>/<random>-<safeName>`：`root` 是配置路径，或延迟创建的私有（0700）进程级临时目录；会话子目录是 `sha256(sessionId)` 的短前缀；叶节点由随机十六进制前缀与调用方的 `suggestedName` 组成，后者会被清理成单一路径段（与 JSONL 后端的 `encodeSegment` 一致）。后端先写入仅所有者可访问的临时 inode，关闭完整文件后通过 no-clobber hard link 发布最终定位符，因此读取方不会观察到不完整的最终文件。定位符就是该路径，检索提示则告知模型可以在该路径上使用 `read` 或 `grep`。
 
 ### spill 策略
 
@@ -92,7 +97,7 @@ interface Config {
 
 策略跳过 `read`，以避免形成 `read -> spill file -> read again` 循环。额外的选择退出配置要等确实出现第二个有此需求的工具后再引入。
 
-后续的[声明式 JSON 结果 spill 决策](../feature/2026-08-14-declarative-json-result-spill.md)在不修改存储 seam 的前提下局部特化了该策略：显式选择 `jsonRenderer` 的工具仍保存同一份完整格式化文本，但使用 `.json` 建议文件名，并以 schema-aware 通知替代首尾预览。自定义 renderer 保留上述通用行为。
+后续的[声明式 JSON 结果 spill 决策](../feature/2026-08-14-declarative-json-result-spill.md)特化了该策略：显式选择 `jsonRenderer` 的工具仍保存同一份完整格式化文本，但使用 `.json` 建议文件名，并以 schema-aware 通知替代首尾预览。[流式 JSON spill 决策](2026-08-14-atomic-streamed-json-spill.md)增加兼容的流式保存操作，并在声明式 JSON 完整字符串物化前拦截。自定义 renderer 保留上述通用行为。
 
 ## 示例：web_fetch
 
@@ -166,8 +171,8 @@ ctx.tools.register(defineTool({
 
 ## 测试
 
-- `dsh-spill` 单元测试锁定 seam 约定：注册为 `ctx.spillStore`、每个上下文只允许一种实现，并在 dispose（资源释放）时释放。
-- `dsh-spill-local` 单元测试覆盖 `saveText`、`encodeSegment` 清理（分隔符／波浪号／完整路径段的点／空值）、会话哈希目录、仅所有者权限、每次保存生成不同路径、配置根目录／私有根目录，以及存储失败时的拒绝。
+- `dsh-spill` 单元测试锁定 seam 约定：注册为 `ctx.spillStore`、每个上下文只允许一种实现、在 dispose（资源释放）时释放，以及 `saveTextStream` 的收集式兼容实现。
+- `dsh-spill-local` 单元测试覆盖已物化与流式保存、最终路径的原子可见性、流失败后的清理、`encodeSegment` 清理（分隔符／波浪号／完整路径段的点／空值）、会话哈希目录、仅所有者权限、每次保存生成不同路径、配置根目录／私有根目录，以及存储失败时的拒绝。
 - `dsh-spill-policy` 单元测试通过 `ctx.tools.execute` 驱动真实工具：禁用模式下无操作、替换超大文本、小结果／非文本结果保持不变、跳过 `read`、尽力回退（保存失败／无后端／无所有者），以及下游组合（限制已替换结果、保留 `additionalContexts`）。
 - `dsh-tool-web` 集成测试驱动 `web_fetch`，其实际执行路径经过 `ctx.tools.execute`，并使用真实的 `spill-local` 后端与策略；测试证明只有刻意加入的 spill 提示会改变模型可见文本，而 spill 文件保存完整的格式化结果。
 - `tui-agent` 示例加载 `spill-local` 与 `spill-policy`，因此其无密钥 Loader／PTY 冒烟测试会执行真实加载路径（namespace-plugin 导出形态与 `inject`）。

@@ -162,6 +162,17 @@ declare module '@deepseek-ai/cordis' {
      */
     'tools/execute'(this: Scoped<ToolRuntime>, exec: ToolDispatchExecution, next: () => Promise<ToolExecutionResult>): Promise<ToolExecutionResult>
     /**
+     * Render one validated value from an explicit `jsonRenderer` declaration.
+     * `next()` performs the ordinary whole-string JSON projection. A listener
+     * may stream, retain, or replace that projection before result content is
+     * materialized; throwing still becomes the tool's normal render failure.
+     * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent's calls.
+     * @param exec - the execution whose canonical value was validated.
+     * @param projection - the frozen value, declared schema, and indentation width.
+     * @mode waterfall
+     */
+    'tools/render-json-output'(this: Scoped<ToolRuntime>, exec: ToolExecution, projection: JsonOutputRender, next: () => Promise<ContentBlock[]>): Promise<ContentBlock[]>
+    /**
      * Accept, replace, enrich, or block a normalized dispatch result. `next()`
      * accepts it unchanged; thrown tools still reach this waterfall as errors. Async
      * listeners must observe `exec.signal`; after they settle, caller
@@ -232,6 +243,14 @@ export interface ToolOutputProjection {
   readonly kind: 'json'
   /** The exact schema used to validate the canonical value serialized into content. */
   readonly schema: JsonSchemaNode
+}
+
+/** Validated canonical JSON handed to the asynchronous renderer waterfall. */
+export interface JsonOutputRender extends ToolOutputProjection {
+  /** Frozen canonical value to project. */
+  readonly value: JsonValue
+  /** JSON indentation width from the renderer declaration. */
+  readonly space: number
 }
 
 /**
@@ -1587,7 +1606,7 @@ export class ToolRuntime extends Service {
       if (!tool) throw new ToolNotFoundError(exec.name)
       state.bodyInvoked = true
       const returned = await tool.execute(exec.arguments, exec)
-      const result = this.createSuccessResult(exec, tool, returned)
+      const result = await this.createSuccessResult(exec, tool, returned)
       return isAborted(signal)
         ? toolAbortedResult(result)
         : result
@@ -1614,7 +1633,7 @@ export class ToolRuntime extends Service {
         carrier, 'tools/execute', mutableExec,
         () => this.dispatchToolBody(mutableExec),
       )
-      const normalized = this.normalizeDispatchResult(exec, result)
+      const normalized = await this.normalizeDispatchResult(exec, result)
       const deferredContexts = this.deferredContexts.get(exec)
       /* v8 ignore next -- dispatch only receives executions minted by this registry's prepare stage */
       if (deferredContexts === undefined) throw new Error('tool registry scheduler invariant violated: unprepared execution')
@@ -1807,7 +1826,7 @@ export class ToolRuntime extends Service {
       }
       const tool = this.resolveExecution(exec.name, exec.agent, exec.parent !== undefined)
       if (tool === undefined) throw new ToolNotFoundError(exec.name)
-      const replaced = this.createSuccessResult(exec, tool, decision.value)
+      const replaced = await this.createSuccessResult(exec, tool, decision.value)
       return this.markCanonical(exec, {
         ...replaced,
         ...additionalContexts.length > 0 ? { additionalContexts } : {},
@@ -1833,16 +1852,24 @@ export class ToolRuntime extends Service {
   }
 
   /** Snapshot, validate, render, and optionally project one successful body value. */
-  private createSuccessResult(exec: ToolExecution, tool: ToolDefinition, candidate: unknown): ToolExecutionSuccess {
+  private async createSuccessResult(exec: ToolExecution, tool: ToolDefinition, candidate: unknown): Promise<ToolExecutionSuccess> {
     const detached = snapshotToolValue(tool.name, candidate)
     const violations = validateJsonSchemaValue(tool.output.schema, detached, 'value')
     if (violations.length > 0) throw new ToolOutputError(tool.name, violations)
     const value = deepFreeze(detached)
     let rendered: ContentBlock[]
     try {
-      rendered = tool.output.render(exec.arguments, value)
       if (tool.output.projection?.kind === 'json') {
+        const projection: JsonOutputRender = {
+          kind: 'json', schema: tool.output.schema, value, space: tool.output.projection.space,
+        }
+        rendered = await this.ctx.waterfall(
+          scopeTarget(this, exec.agent), 'tools/render-json-output', exec, projection,
+          () => Promise.resolve(tool.output.render(exec.arguments, value)),
+        )
         this.outputProjections.set(exec, { kind: 'json', schema: tool.output.schema })
+      } else {
+        rendered = tool.output.render(exec.arguments, value)
       }
     } catch (error: unknown) {
       throw projectionError(tool.name, 'render', error)
@@ -1869,7 +1896,7 @@ export class ToolRuntime extends Service {
   }
 
   /** Normalize an around-dispatch wrapper's authored result through the owning output contract. */
-  private normalizeDispatchResult(exec: ToolExecution, result: ToolExecutionResult): ToolExecutionResult {
+  private async normalizeDispatchResult(exec: ToolExecution, result: ToolExecutionResult): Promise<ToolExecutionResult> {
     if (this.canonicalResults.get(result) === exec.token) return result
     if (result.isError) {
       return this.markCanonical(exec, {
@@ -1882,7 +1909,7 @@ export class ToolRuntime extends Service {
     }
     const tool = this.resolveExecution(exec.name, exec.agent, exec.parent !== undefined)
     if (tool === undefined) throw new ToolNotFoundError(exec.name)
-    const normalized = this.createSuccessResult(exec, tool, result.value)
+    const normalized = await this.createSuccessResult(exec, tool, result.value)
     return this.markCanonical(exec, {
       ...normalized,
       ...result.additionalContexts !== undefined ? { additionalContexts: result.additionalContexts } : {},

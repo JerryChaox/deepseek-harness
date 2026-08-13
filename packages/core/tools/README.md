@@ -37,7 +37,7 @@ Cancellation is cooperative and quiescent. Every typed invocation supplies a cal
 
 ### Live events
 
-The live registry pipeline has three transformable waterfalls, then the definition-owned content finalizer, then the observe-only `tools/result` event; registry changes are deliberately unfiltered shared-state notifications. Exact signatures, dispatch modes, scope filtering, and failure containment contracts live in the generated region of [tools.md](../../../docs/subsystems/tools.md#cordis-surface), while the complete ordering is visualized in the generated [tool execution pipeline](../../../docs/tool-execution-pipeline.md). `tools/result` is live; the similarly named `tool/result` is the durable session event the agent loop appends afterwards.
+The live registry pipeline has three result/control waterfalls plus `tools/render-json-output` for an explicitly declared JSON projection, then the definition-owned content finalizer and observe-only `tools/result` event; registry changes are deliberately unfiltered shared-state notifications. Exact signatures, dispatch modes, scope filtering, and failure containment contracts live in the generated region of [tools.md](../../../docs/subsystems/tools.md#cordis-surface), while the complete ordering is visualized in the generated [tool execution pipeline](../../../docs/tool-execution-pipeline.md). `tools/result` is live; the similarly named `tool/result` is the durable session event the agent loop appends afterwards.
 
 ### Key types
 

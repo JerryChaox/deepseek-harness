@@ -65,6 +65,16 @@ export interface SaveTextSpill {
   content: string
 }
 
+/** One request to persist a single-consumption UTF-8 text stream. */
+export interface SaveTextStreamSpill {
+  owner: SpillOwner
+  source: SpillSource
+  /** Same safe-name hint contract as {@link SaveTextSpill.suggestedName}. */
+  suggestedName: string
+  /** Ordered text chunks whose concatenation is the complete file content. */
+  content: Iterable<string> | AsyncIterable<string>
+}
+
 /** A saved spill artifact: its locator, byte length, and backend-specific retrieval guidance. */
 export interface SpillRef {
   locator: SpillLocator

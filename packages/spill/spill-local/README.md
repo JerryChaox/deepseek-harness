@@ -10,7 +10,7 @@ Files land at `<root>/session-<hash>/​<random>-<safeName>`:
 
 - **`root`** — the config `root` (resolved to absolute), or a lazily-created private (0700) per-process directory under the OS temp dir when omitted. A predictable, world-readable root would let other local users read spilled tool output or plant symlinks.
 - **`session-<hash>`** — a short `sha256(sessionId)` prefix, so a session's spill files group together and a future cleanup can drop them per session.
-- **`<random>-<safeName>`** — an unpredictable hex prefix (defeats symlink planting in a shared root) plus the caller's `suggestedName` sanitized to one safe path segment (traversal-proof; mirrors the JSONL persistence backend's `encodeSegment`). The write is exclusive + owner-only (`open(path, 'wx', 0o600)`): it fails on any pre-existing path, symlink or not, so a planted target cannot redirect it.
+- **`<random>-<safeName>`** — an unpredictable hex prefix plus the caller's `suggestedName` sanitized to one safe segment. Writes first use an owner-only unpredictable `.tmp-*` inode in the same private session directory; after complete write and close, a no-clobber hard link atomically publishes the final name and the temporary link is removed. A reader can therefore observe no final locator or the complete bytes, never a partially written final file.
 
 ## Config
 
@@ -18,7 +18,7 @@ Files land at `<root>/session-<hash>/​<random>-<safeName>`:
 |---|---|---|
 | `root` | private 0700 temp dir | Root directory for spill files. Set to keep them under a known location. |
 
-`saveText` rejects on a real storage failure (permissions, ENOSPC); the spill policy treats a rejection as best-effort and keeps the inline result. See the seam README for the vocabulary and the [tool output spill Agent Note](../../../.agents/notes/implemented/architecture/2026-07-08-tool-output-spill-files.md) for the design.
+`saveText` and `saveTextStream` reject on a real storage or input-stream failure. Failed stream saves remove their private temporary file and never publish a final locator. The spill policy treats rejection as best-effort and keeps the ordinary inline renderer result.
 
 ## Model Experience
 

@@ -1935,7 +1935,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/spill/spill-policy/src/index.ts:60`](../packages/spill/spill-policy/src/index.ts)
+Source: [`packages/spill/spill-policy/src/index.ts:61`](../packages/spill/spill-policy/src/index.ts)
 
 <a id="deepseek-aidsh-storage-domain"></a>
 
@@ -2794,7 +2794,7 @@ export interface Config {
 export type ToolPresentationMode = 'native' | 'code' | 'both'
 ```
 
-Source: [`packages/core/tools/src/index.ts:683`](../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:702`](../packages/core/tools/src/index.ts)
 
 <a id="deepseek-aidsh-typert-loader"></a>
 

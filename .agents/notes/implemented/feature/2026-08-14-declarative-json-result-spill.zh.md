@@ -37,5 +37,5 @@ spill 策略只特化这些已声明的 JSON 投影。结果超过 `maxInlineByt
 - 超限的声明式 JSON 在 locator 中保持完整且可解析；模型不再收到一个语法损坏的片段作为预览。
 - 策略复用工具输出 schema，不执行 JSON probe。无约束 `json` schema 会如实报告为 `json`，而不是根据一次运行样本推断。
 - opt-in 是显式的。既有工具与第三方自定义 renderer 在选择 `jsonRenderer` 前都不会改变。
-- 该变更不会降低大型值执行 `JSON.stringify` 所需的峰值内存：post-execute spill 之前仍会完整物化 JSON 字符串。流式序列化是独立的架构优化，便于单独评审其内存与文件发布权衡。
+- 基础 renderer 保留普通的整串行为。[流式 JSON spill 决策](../architecture/2026-08-14-atomic-streamed-json-spill.md)允许 spill 策略在这项显式投影物化前进行拦截，其他消费方和回退路径仍使用普通 renderer。
 - Code Mode 嵌套 dispatch log 保持既有通用文本 spill 行为。本决策刻意不把执行期局部投影加入持久化 dispatch-log 契约。

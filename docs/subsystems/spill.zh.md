@@ -26,6 +26,18 @@ interface SaveTextSpill {
 ```
 
 ```ts type-equiv
+/** One request to persist a single-consumption UTF-8 text stream. */
+interface SaveTextStreamSpill {
+  owner: SpillOwner
+  source: SpillSource
+  /** Same safe-name hint contract as {@link SaveTextSpill.suggestedName}. */
+  suggestedName: string
+  /** Ordered text chunks whose concatenation is the complete file content. */
+  content: Iterable<string> | AsyncIterable<string>
+}
+```
+
+```ts type-equiv
 /**
  * Save-time storage namespace for a spilled artifact. The session id lets a
  * backend group storage under the producing session, but the returned
@@ -111,6 +123,15 @@ Semantics every implementation must honor:
  * @returns the saved artifact's {@link SpillRef}; rejects on a storage failure.
  */
 abstract saveText(input: SaveTextSpill): Promise<SpillRef>
+
+/**
+ * Persist ordered text chunks without requiring the caller to concatenate them.
+ * The compatibility default materializes once and delegates to {@link saveText};
+ * streaming backends override this method.
+ * @param input - owner/source/name fields plus a single-consumption UTF-8 stream.
+ * @returns the saved result reference; rejects on stream or storage failure.
+ */
+async saveTextStream(input: SaveTextStreamSpill): Promise<SpillRef>
 ```
 
 Source: [`packages/spill/spill/src/index.ts:45`](../../packages/spill/spill/src/index.ts)

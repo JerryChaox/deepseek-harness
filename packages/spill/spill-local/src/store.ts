@@ -10,7 +10,7 @@
 
 import { createHash, randomBytes } from 'node:crypto'
 import { mkdtempSync } from 'node:fs'
-import { mkdir, open } from 'node:fs/promises'
+import { link, mkdir, open, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -93,6 +93,12 @@ export interface SavedText {
   bytes: number
 }
 
+/** Stream counterpart to {@link SaveTextOptions}. */
+export interface SaveTextStreamOptions extends Omit<SaveTextOptions, 'content'> {
+  /** Ordered chunks whose concatenation is the complete UTF-8 file. */
+  content: Iterable<string> | AsyncIterable<string>
+}
+
 /**
  * Write `content` to a fresh file under the session-scoped directory and return
  * its path + byte length. The filename is a random hex prefix plus the
@@ -105,16 +111,46 @@ export interface SavedText {
  * @returns The written file path and UTF-8 byte length.
  */
 export async function saveTextFile(options: SaveTextOptions): Promise<SavedText> {
+  return saveTextStreamFile({
+    ...options,
+    content: (function* (): Generator<string> { yield options.content })(),
+  })
+}
+
+/**
+ * Stream a complete file into a private temporary inode, then publish it with
+ * a no-clobber hard link only after writing and closing succeeds. Readers can
+ * observe either no final locator or the complete bytes, never a prefix.
+ * @param options The resolved root and ordered content stream.
+ * @returns the atomically published path and exact UTF-8 byte length.
+ */
+export async function saveTextStreamFile(options: SaveTextStreamOptions): Promise<SavedText> {
   const dir = sessionDir(options.root, options.sessionId)
   await mkdir(dir, { recursive: true, mode: 0o700 })
   const safeName = encodeSegment(options.suggestedName)
   const path = join(dir, `${randomBytes(6).toString('hex')}-${safeName}`)
-  const bytes = Buffer.byteLength(options.content, 'utf8')
-  const handle = await open(path, 'wx', 0o600)
+  const temporaryPath = join(dir, `.tmp-${randomBytes(12).toString('hex')}`)
+  const handle = await open(temporaryPath, 'wx', 0o600)
+  let closed = false
+  let bytes = 0
   try {
-    await handle.writeFile(options.content)
-  } finally {
+    for await (const chunk of options.content) {
+      bytes += Buffer.byteLength(chunk, 'utf8')
+      await handle.writeFile(chunk)
+    }
     await handle.close()
+    closed = true
+    await link(temporaryPath, path)
+    return { path, bytes }
+  } finally {
+    if (!closed) await handle.close().catch(
+      /* v8 ignore next -- Close failure is superseded by the stream/storage operation that entered cleanup. */
+      () => {},
+    )
+    // Cleanup cannot replace the stream/storage failure or invalidate a published locator.
+    await unlink(temporaryPath).catch(
+      /* v8 ignore next -- Temporary-link cleanup is best effort after the primary outcome is known. */
+      () => {},
+    )
   }
-  return { path, bytes }
 }

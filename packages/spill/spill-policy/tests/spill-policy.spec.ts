@@ -19,7 +19,7 @@ import ToolRuntime, { defineContentToolFixture, defineTool, jsonRenderer } from 
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { PostToolDecision, ToolExecution, ToolExecutionToken } from '@deepseek-ai/dsh-tools'
 import { SpillLocator, SpillStore } from '@deepseek-ai/dsh-spill'
-import type { SaveTextSpill, SpillRef } from '@deepseek-ai/dsh-spill'
+import type { SaveTextSpill, SaveTextStreamSpill, SpillRef } from '@deepseek-ai/dsh-spill'
 import * as SpillPolicy from '@deepseek-ai/dsh-spill-policy'
 import { WorkerThreadCodeRuntime } from '@deepseek-ai/dsh-code-runtime-worker-thread'
 
@@ -28,6 +28,7 @@ const testToolSignal = new AbortController().signal
 /** A stub spill backend recording its saves; `fail` exercises the best-effort fallback. */
 class StubStore extends SpillStore {
   saves: SaveTextSpill[] = []
+  streamSaves = 0
   fail = false
   /** Per-save hang hook: each call awaits the returned promise before completing. */
   gate: (() => Promise<void>) | undefined
@@ -41,6 +42,11 @@ class StubStore extends SpillStore {
       bytes: Buffer.byteLength(input.content, 'utf8'),
       retrievalHint: 'Use the stub retrieval path.',
     }
+  }
+
+  override async saveTextStream(input: SaveTextStreamSpill): Promise<SpillRef> {
+    this.streamSaves++
+    return super.saveTextStream(input)
   }
 }
 
@@ -213,6 +219,7 @@ describe('declarative JSON replacement', () => {
     const text = textOf(result.content)
 
     expect(saved?.suggestedName).toBe('structured.json')
+    expect(spill?.streamSaves).toBe(1)
     expect(JSON.parse(saved?.content ?? '')).toEqual(value)
     expect(text).toContain('Full JSON result (')
     expect(text).toContain('Root output schema: object {"items": array<string>, "total"?: integer}')
@@ -419,6 +426,40 @@ describe('declarative JSON replacement', () => {
 
     expect(textOf((await ctx.tools.execute(exec('json-without-store'))).content))
       .toBe(JSON.stringify('x'.repeat(1_000)))
+  })
+
+  it('keeps small, read, nested, and failed-stream JSON on the ordinary render path', async () => {
+    const { ctx, spill } = await setup({ maxInlineBytes: 100 })
+    for (const name of ['small-json', 'read', 'nested-json', 'failed-stream-json']) {
+      ctx.tools.register(defineTool({
+        name,
+        description: name,
+        parameters: {},
+        output: { schema: { type: 'string' }, render: jsonRenderer({ space: 0 }) },
+        async execute() { return name === 'small-json' ? 'small' : 'x'.repeat(1_000) },
+      }))
+    }
+
+    let delegatedRenders = 0
+    const stopCapture = ctx.on('tools/render-json-output', (_exec, _projection, next) => {
+      delegatedRenders++
+      return next()
+    })
+    const small = await ctx.tools.execute(exec('small-json'))
+    stopCapture()
+    const read = await ctx.tools.execute(exec('read'))
+    const nested = await ctx.tools.execute({
+      ...exec('nested-json'), parent: Symbol('parent') as ToolExecutionToken,
+    })
+    spill!.fail = true
+    const failed = await ctx.tools.execute(exec('failed-stream-json'))
+
+    expect(textOf(small.content)).toBe('"small"')
+    expect(textOf(read.content)).toBe(JSON.stringify('x'.repeat(1_000)))
+    expect(textOf(nested.content)).toBe(JSON.stringify('x'.repeat(1_000)))
+    expect(textOf(failed.content)).toBe(JSON.stringify('x'.repeat(1_000)))
+    expect(spill?.streamSaves).toBe(1)
+    expect(delegatedRenders).toBe(1)
   })
 })
 

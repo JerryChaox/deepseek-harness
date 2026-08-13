@@ -15,10 +15,10 @@
  */
 
 import { Context, Service } from '@deepseek-ai/cordis'
-import type { SaveTextSpill, SpillRef } from './types.ts'
+import type { SaveTextSpill, SaveTextStreamSpill, SpillRef } from './types.ts'
 
 export { SpillLocator } from './types.ts'
-export type { SaveTextSpill, SpillOwner, SpillRef, SpillSource } from './types.ts'
+export type { SaveTextSpill, SaveTextStreamSpill, SpillOwner, SpillRef, SpillSource } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -53,6 +53,24 @@ export abstract class SpillStore extends Service {
    * @returns the saved artifact's {@link SpillRef}; rejects on a storage failure.
    */
   abstract saveText(input: SaveTextSpill): Promise<SpillRef>
+
+  /**
+   * Persist ordered text chunks without requiring the caller to concatenate them.
+   * The compatibility default materializes once and delegates to {@link saveText};
+   * streaming backends override this method.
+   * @param input - owner/source/name fields plus a single-consumption UTF-8 stream.
+   * @returns the saved result reference; rejects on stream or storage failure.
+   */
+  async saveTextStream(input: SaveTextStreamSpill): Promise<SpillRef> {
+    const chunks: string[] = []
+    for await (const chunk of input.content) chunks.push(chunk)
+    return this.saveText({
+      owner: input.owner,
+      source: input.source,
+      suggestedName: input.suggestedName,
+      content: chunks.join(''),
+    })
+  }
 }
 
 export default SpillStore

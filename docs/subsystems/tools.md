@@ -43,6 +43,16 @@ interface ToolOutputProjection {
 ```
 
 ```ts type-equiv
+/** Validated canonical JSON handed to the asynchronous renderer waterfall. */
+interface JsonOutputRender extends ToolOutputProjection {
+  /** Frozen canonical value to project. */
+  readonly value: JsonValue
+  /** JSON indentation width from the renderer declaration. */
+  readonly space: number
+}
+```
+
+```ts type-equiv
 /** A registered tool: its schema plus the execution function. */
 interface ToolDefinition extends ToolSchema {
   /** Mandatory canonical output declaration. */
@@ -599,7 +609,7 @@ async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>
 
 Types: [ScopeKey](scope.md)
 
-Source: [`packages/core/tools/src/index.ts:816`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:835`](../../packages/core/tools/src/index.ts)
 
 <a id="tools-events"></a>
 
@@ -624,7 +634,7 @@ A tool was registered or unregistered, or a scoped restriction changed (the avai
 'tools/change'(): void
 ```
 
-Source: [`packages/core/tools/src/index.ts:207`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:218`](../../packages/core/tools/src/index.ts)
 
 <a id="toolscode-dispatch-log--waterfall"></a>
 
@@ -651,7 +661,7 @@ Allow a listener to replace content in the DURABLE LOG COPY of one `run_code` su
 
 Types: [ContentBlock](llm-streaming.md) · [Scoped](scope.md)
 
-Source: [`packages/core/tools/src/index.ts:189`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:200`](../../packages/core/tools/src/index.ts)
 
 <a id="toolsexecute--waterfall"></a>
 
@@ -700,7 +710,7 @@ Accept, replace, enrich, or block a normalized dispatch result. `next()` accepts
 
 Types: [Scoped](scope.md)
 
-Source: [`packages/core/tools/src/index.ts:175`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:186`](../../packages/core/tools/src/index.ts)
 
 <a id="toolspre-execute--waterfall"></a>
 
@@ -725,6 +735,30 @@ Types: [Scoped](scope.md)
 
 Source: [`packages/core/tools/src/index.ts:152`](../../packages/core/tools/src/index.ts)
 
+<a id="toolsrender-json-output--waterfall"></a>
+
+#### `tools/render-json-output` — waterfall
+
+Render one validated value from an explicit `jsonRenderer` declaration. `next()` performs the ordinary whole-string JSON projection. A listener may stream, retain, or replace that projection before result content is materialized; throwing still becomes the tool's normal render failure. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent's calls.
+
+```ts cordis-catalog
+/**
+ * Render one validated value from an explicit `jsonRenderer` declaration.
+ * `next()` performs the ordinary whole-string JSON projection. A listener
+ * may stream, retain, or replace that projection before result content is
+ * materialized; throwing still becomes the tool's normal render failure.
+ * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent's calls.
+ * @param exec - the execution whose canonical value was validated.
+ * @param projection - the frozen value, declared schema, and indentation width.
+ * @mode waterfall
+ */
+'tools/render-json-output'(this: Scoped<ToolRuntime>, exec: ToolExecution, projection: JsonOutputRender, next: () => Promise<ContentBlock[]>): Promise<ContentBlock[]>
+```
+
+Types: [ContentBlock](llm-streaming.md) · [Scoped](scope.md)
+
+Source: [`packages/core/tools/src/index.ts:174`](../../packages/core/tools/src/index.ts)
+
 <a id="toolsresult--emit"></a>
 
 #### `tools/result` — emit
@@ -744,5 +778,5 @@ Observe the frozen, lossless-JSON final outcome. Listener failures are contained
 
 Types: [Scoped](scope.md)
 
-Source: [`packages/core/tools/src/index.ts:197`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:208`](../../packages/core/tools/src/index.ts)
 <!-- END GENERATED cordis-surface -->

@@ -1532,6 +1532,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'input', description: 'the owner, caller-supplied source fields, suggested name, and full text to save.' }],
         returns: 'the saved artifact\'s {@link SpillRef}; rejects on a storage failure.',
       },
+      {
+        signature: 'async saveTextStream(input: SaveTextStreamSpill): Promise<SpillRef>',
+        description: 'Persist ordered text chunks without requiring the caller to concatenate them. The compatibility default materializes once and delegates to saveText; streaming backends override this method.',
+        parameters: [{ name: 'input', description: 'owner/source/name fields plus a single-consumption UTF-8 stream.' }],
+        returns: 'the saved result reference; rejects on stream or storage failure.',
+      },
     ],
   },
   {
@@ -2556,6 +2562,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'exec', description: 'the pending call (name, parsed arguments, caller agent).' }],
   },
   {
+    name: 'tools/render-json-output',
+    mode: 'waterfall',
+    signature: '\'tools/render-json-output\'(this: Scoped<ToolRuntime>, exec: ToolExecution, projection: JsonOutputRender, next: () => Promise<ContentBlock[]>): Promise<ContentBlock[]>',
+    summary: 'Render one validated value from an explicit `jsonRenderer` declaration.',
+    description: 'Render one validated value from an explicit `jsonRenderer` declaration. `next()` performs the ordinary whole-string JSON projection. A listener may stream, retain, or replace that projection before result content is materialized; throwing still becomes the tool\'s normal render failure. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent\'s calls.',
+    parameters: [{ name: 'exec', description: 'the execution whose canonical value was validated.' }, { name: 'projection', description: 'the frozen value, declared schema, and indentation width.' }],
+  },
+  {
     name: 'tools/result',
     mode: 'emit',
     signature: '\'tools/result\'(this: Scoped<ToolRuntime>, exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): undefined',
@@ -3232,6 +3246,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type JobStatus = \'running\' | \'stopping\' | \'completed\' | \'killed\' | \'failed\';',
   },
   {
+    name: 'JsonOutputRender',
+    declaration: 'export interface JsonOutputRender extends ToolOutputProjection {\n    readonly value: JsonValue;\n    readonly space: number;\n}',
+  },
+  {
     name: 'JsonOutputRenderer',
     declaration: 'export interface JsonOutputRenderer {\n    readonly kind: \'json\';\n    readonly space: number;\n}',
   },
@@ -3690,6 +3708,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SaveTextSpill',
     declaration: 'export interface SaveTextSpill {\n    owner: SpillOwner;\n    source: SpillSource;\n    suggestedName: string;\n    content: string;\n}',
+  },
+  {
+    name: 'SaveTextStreamSpill',
+    declaration: 'export interface SaveTextStreamSpill {\n    owner: SpillOwner;\n    source: SpillSource;\n    suggestedName: string;\n    content: Iterable<string> | AsyncIterable<string>;\n}',
   },
   {
     name: 'ScheduledToolDispatch',

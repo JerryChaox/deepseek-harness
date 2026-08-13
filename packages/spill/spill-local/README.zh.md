@@ -10,7 +10,7 @@
 
 - **`root`**：使用配置中的 `root`（解析为绝对路径）；如果省略，则在操作系统临时目录下延迟创建每进程私有（0700）目录。可预测且任何用户均可读取的根目录会让其他本地用户读取 spill 工具输出，或在其中预置符号链接。
 - **`session-<hash>`**：截短的 `sha256(sessionId)` 前缀，用于将同一会话的 spill 文件归在一起，以便未来的清理操作可按会话删除。
-- **`<random>-<safeName>`**：不可预测的十六进制前缀（防止在共享根目录中预置符号链接），加上经过清理的调用方 `suggestedName`，使其成为单个安全路径段（防路径遍历；与 JSONL 持久化后端的 `encodeSegment` 一致）。写入操作采用排他方式，且权限仅限所有者（`open(path, 'wx', 0o600)`）：如果路径已经存在，无论是否为符号链接，操作都会失败，因此预置的目标无法重定向写入。
+- **`<random>-<safeName>`**：不可预测的十六进制前缀，加上经过清理的调用方 `suggestedName`，使其成为单个安全路径段。写入先使用同一私有 session 目录中仅 owner 可读写、不可预测的 `.tmp-*` inode；完整写入并关闭后，再通过 no-clobber hard link 原子发布最终名称，随后删除临时 link。因此读取方只能看到最终 locator 不存在，或看到完整字节，绝不会看到写到一半的最终文件。
 
 ## 配置
 
@@ -18,7 +18,7 @@
 |---|---|---|
 | `root` | 私有 0700 临时目录 | spill 文件的根目录。设置后可将这些文件保存在已知位置。 |
 
-`saveText` 在发生真实存储故障（权限、ENOSPC）时返回拒绝；spill 策略会按尽力而为原则处理该拒绝，并保留内联结果。词汇见 seam README，设计见[工具输出 spill Agent Note](../../../.agents/notes/implemented/architecture/2026-07-08-tool-output-spill-files.md)。
+`saveText` 与 `saveTextStream` 在发生真实存储故障或输入 stream 失败时都会返回拒绝。失败的 stream 保存会删除私有临时文件，且绝不发布最终 locator。spill 策略会按尽力而为原则处理拒绝，并保留普通内联 renderer 结果。
 
 ## 模型体验
 
