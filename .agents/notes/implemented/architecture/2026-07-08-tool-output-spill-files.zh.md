@@ -92,6 +92,8 @@ interface Config {
 
 策略跳过 `read`，以避免形成 `read -> spill file -> read again` 循环。额外的选择退出配置要等确实出现第二个有此需求的工具后再引入。
 
+后续的[声明式 JSON 结果 spill 决策](../feature/2026-08-14-declarative-json-result-spill.md)在不修改存储 seam 的前提下局部特化了该策略：显式选择 `jsonRenderer` 的工具仍保存同一份完整格式化文本，但使用 `.json` 建议文件名，并以 schema-aware 通知替代首尾预览。自定义 renderer 保留上述通用行为。
+
 ## 示例：web_fetch
 
 `web_fetch` 是首个示例，因为它天然会返回较大的文本结果，而且无需工具专用的 spill 代码。该工具本身无需特殊处理：
@@ -178,9 +180,9 @@ ctx.tools.register(defineTool({
 
 本地后端的价值取决于现有 `read`／`grep` 工具能否检查返回的本地路径，即使 spill 目录位于会话 cwd 之外。目前这一条件成立，因为文件系统策略会记录观察结果并设置写保护，但不会把读取限制在工作区内。未来的工作区限制策略必须显式允许本地 spill 路径，或改用检索提示指向受支持读取器的非文件 spill 后端。
 
-**快照缺口。** 目前没有 ACP 快照场景覆盖 transcript（文本记录）可见的 `web_fetch` spill 提示。ACP 快照 harness 在无密钥环境中回放，无法访问实时 web，而 `web_fetch` spill 需要一个真实的超上限 HTTP 正文；确定性场景需要一个预置的 loopback fetch 目标，但当前回放树尚未接线（示例根本没有加载 `tool-web`）。该行为改由 `dsh-tool-web` 针对 loopback server 的集成测试覆盖。弥补该缺口属于后续工作：把 `tool-web` 和预置 fetch 目标接入 ACP 示例，然后录制 `web-fetch-spill` 场景。
+**快照缺口。** 目前没有 ACP 快照场景覆盖 transcript（文本记录）可见的 `web_fetch` spill 提示。ACP 快照 harness 在无密钥环境中回放，无法访问实时 web，而 `web_fetch` spill 需要一个真实的超上限 HTTP 正文；确定性场景需要一个预置的 loopback fetch 目标，但当前回放树尚未接线（示例根本没有加载 `tool-web`）。该行为改由 `dsh-tool-web` 针对 loopback server 的集成测试覆盖。声明式 JSON 特化已经有 ACP 快照：`cordis-json-spill` 以真实 Cordis inspection 工具和本地 spill 栈启动。剩余缺口的弥补仍属于后续工作：把 `tool-web` 和预置 fetch 目标接入 ACP 示例，然后录制 `web-fetch-spill` 场景。
 
-如果策略开始负责工具专用语义，就会膨胀得过大。它的范围保持狭窄：只处理纯文本最终结果。由工具负责的提前 spill 仍留作未来工作。
+如果策略开始负责工具专用语义，就会膨胀得过大。它的范围保持狭窄：通用的全是文本块的结果保留，加上一种由 renderer 声明的 JSON 特化；它不探测内容，也不检查工具名称。由工具负责的提前 spill 仍留作未来工作。
 
 ## 考虑过的替代方案
 

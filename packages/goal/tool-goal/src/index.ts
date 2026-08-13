@@ -9,7 +9,7 @@ import z from '@deepseek-ai/schemastery'
 import { GoalId } from '@deepseek-ai/dsh-goal'
 import type { GoalRef, GoalView } from '@deepseek-ai/dsh-goal'
 import { boundContextSummary, createUserMessage, HarnessError } from '@deepseek-ai/dsh-llm'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, jsonRenderer } from '@deepseek-ai/dsh-tools'
 import type { GenericCallView } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import {
@@ -175,7 +175,7 @@ function goalValue(goal: GoalView | undefined): GoalToolValue {
 /** Reusable canonical output declaration for all three goal controls. */
 const GOAL_OUTPUT = {
   schema: GOAL_VALUE_SCHEMA,
-  render: (_args: unknown, value: GoalToolValue) => [{ type: 'text' as const, text: JSON.stringify(value) }],
+  render: jsonRenderer({ space: 0 }),
 }
 
 /** Generic, args-only pending presentation shared by the goal tools. */

@@ -51,7 +51,7 @@ import type { Omitted } from '@deepseek-ai/dsh-output-retention'
 import type { SaveTextSpill, SpillRef } from '@deepseek-ai/dsh-spill'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { CallId } from '@deepseek-ai/dsh-llm'
-import type { PostToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
+import type { JsonSchemaNode, PostToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
 import type { SpillPolicyExec } from './types.ts'
 
 export type { SpillPolicyExec } from './types.ts'
@@ -107,6 +107,59 @@ function spillNotice(omitted: Omitted, ref: SpillRef): string {
   return `(${omission} Full formatted result stored at: ${ref.locator}. ${ref.retrievalHint})`
 }
 
+/** Root-only type label. Never recurse into an attacker-controlled schema tree. */
+function schemaType(schema: JsonSchemaNode): string {
+  if (schema.type === 'array') {
+    const itemType = schema.items?.type ?? (schema.items?.oneOf === undefined ? 'json' : 'oneOf')
+    return `array<${itemType}>`
+  }
+  if (schema.type !== undefined) return schema.type
+  if (schema.oneOf !== undefined) return 'oneOf'
+  return 'json'
+}
+
+/** Describe the root and direct object properties without exceeding `maxBytes`. */
+function rootSchemaSummary(schema: JsonSchemaNode, maxBytes: number): string | undefined {
+  let root = schemaType(schema)
+  if (schema.oneOf !== undefined) {
+    let union = 'oneOf<'
+    let complete = true
+    for (const [index, branchSchema] of schema.oneOf.entries()) {
+      const branch = `${index === 0 ? '' : ' | '}${schemaType(branchSchema)}`
+      const suffix = index === schema.oneOf.length - 1 ? '>' : ' | …>'
+      if (Buffer.byteLength(union + branch + suffix, 'utf8') > maxBytes) {
+        complete = false
+        break
+      }
+      union += branch
+    }
+    if (union !== 'oneOf<') root = `${union}${complete ? '' : ' | …'}>`
+  }
+  if (Buffer.byteLength(root, 'utf8') > maxBytes) return undefined
+  if (schema.type !== 'object' || schema.properties === undefined) return root
+  let summary = 'object {'
+  let fieldCount = 0
+  for (const [key, child] of Object.entries(schema.properties)) {
+    const field = `${fieldCount === 0 ? '' : ', '}${JSON.stringify(key)}${schema.required?.includes(key) === true ? '' : '?'}: ${schemaType(child)}`
+    if (Buffer.byteLength(summary + field + ', …}', 'utf8') > maxBytes) {
+      return fieldCount === 0 ? root : `${summary}, …}`
+    }
+    summary += field
+    fieldCount++
+  }
+  return fieldCount === 0 ? root : `${summary}}`
+}
+
+/** Build the complete JSON spill notice within the configured model-facing byte cap. */
+function jsonSpillNotice(totalBytes: number, ref: SpillRef, schema: JsonSchemaNode, cap: number): string | undefined {
+  const prefix = `(Full JSON result (${totalBytes} bytes) stored at: ${ref.locator}. Root output schema: `
+  const suffix = `. ${ref.retrievalHint})`
+  const schemaBudget = cap - Buffer.byteLength(prefix + suffix, 'utf8')
+  const summary = rootSchemaSummary(schema, schemaBudget)
+  if (summary === undefined) return undefined
+  return `${prefix}${summary}${suffix}`
+}
+
 export function apply(ctx: Context, config: Config): void {
   const maxInlineBytes = config.maxInlineBytes
   // Omitted ⇒ no automatic spill policy: register nothing at all.
@@ -119,6 +172,38 @@ export function apply(ctx: Context, config: Config): void {
   }
   // Narrowed once for the nested arms (closure narrowing does not survive awaits).
   const cap: number = maxInlineBytes
+
+  /** Save one complete projection, or preserve the inline result when storage is unavailable. */
+  async function saveProjection(
+    text: string,
+    sessionId: SessionId | undefined,
+    toolName: string,
+    callId: CallId,
+    label: 'result' | 'dispatch',
+    extension: 'txt' | 'json',
+  ): Promise<SpillRef | undefined> {
+    if (sessionId === undefined) {
+      ctx.logger.warn(`spill-policy: no session owner for ${toolName} ${label}; keeping the inline content`)
+      return undefined
+    }
+    const spillStore = ctx.get('spillStore')
+    if (!spillStore) {
+      ctx.logger.warn('spill-policy: no ctx.spillStore backend loaded; keeping the inline content')
+      return undefined
+    }
+    const save: SaveTextSpill = {
+      owner: { sessionId },
+      source: { toolName, callId, label },
+      suggestedName: `${toolName}.${extension}`,
+      content: text,
+    }
+    try {
+      return await spillStore.saveText(save)
+    } catch (error: unknown) {
+      ctx.logger.warn(`spill-policy: saveText failed for ${toolName}: ${String(error)}; keeping the inline content`)
+      return undefined
+    }
+  }
 
   /**
    * Spill `text` and build the bounded replacement (preview + notice), or
@@ -135,30 +220,8 @@ export function apply(ctx: Context, config: Config): void {
     callId: CallId,
     label: 'result' | 'dispatch',
   ): Promise<string | undefined> {
-    if (sessionId === undefined) {
-      ctx.logger.warn(`spill-policy: no session owner for ${toolName} ${label}; keeping the inline content`)
-      return undefined
-    }
-    const spillStore = ctx.get('spillStore')
-    if (!spillStore) {
-      ctx.logger.warn('spill-policy: no ctx.spillStore backend loaded; keeping the inline content')
-      return undefined
-    }
-    const save: SaveTextSpill = {
-      owner: { sessionId },
-      source: { toolName, callId, label },
-      suggestedName: `${toolName}.txt`,
-      content: text,
-    }
-    let ref: SpillRef
-    try {
-      ref = await spillStore.saveText(save)
-    } catch (error: unknown) {
-      // Best-effort: a storage failure (permissions, ENOSPC, backend down) must
-      // never fail the call or hide the content — keep the original inline.
-      ctx.logger.warn(`spill-policy: saveText failed for ${toolName}: ${String(error)}; keeping the inline content`)
-      return undefined
-    }
+    const ref = await saveProjection(text, sessionId, toolName, callId, label, 'txt')
+    if (ref === undefined) return undefined
 
     // Reserve the notice's byte cost INSIDE maxInlineBytes so the replacement
     // (preview + blank line + notice) never exceeds the documented cap — a naive
@@ -187,6 +250,22 @@ export function apply(ctx: Context, config: Config): void {
     return replacedText
   }
 
+  /** Save one declarative JSON projection and replace it with its locator and validated root schema. */
+  async function jsonReplacement(
+    text: string,
+    totalBytes: number,
+    schema: JsonSchemaNode,
+    exec: ToolExecution,
+  ): Promise<string | undefined> {
+    const ref = await saveProjection(text, ownerSessionId(exec), exec.name, exec.callId, 'result', 'json')
+    if (ref === undefined) return undefined
+    const notice = jsonSpillNotice(totalBytes, ref, schema, cap)
+    if (notice === undefined) {
+      ctx.logger.warn(`spill-policy: JSON spill notice for ${exec.name} exceeds maxInlineBytes; keeping the inline content`)
+    }
+    return notice
+  }
+
   ctx.on('tools/post-execute', async (exec, result, next): Promise<PostToolDecision> => {
     // Delegate first so a downstream listener (e.g. a hook) settles the result;
     // we bound whatever it accepted. A block passes through — spill only shapes
@@ -202,7 +281,12 @@ export function apply(ctx: Context, config: Config): void {
     const totalBytes = Buffer.byteLength(text, 'utf8')
     if (totalBytes <= maxInlineBytes) return decision
 
-    const replacedText = await spillReplacement(text, totalBytes, ownerSessionId(exec), exec.name, exec.callId, 'result')
+    const outputProjection = decision.content === undefined && !result.isError
+      ? ctx.tools.outputProjection(exec)
+      : undefined
+    const replacedText = outputProjection?.kind === 'json'
+      ? await jsonReplacement(text, totalBytes, outputProjection.schema, exec)
+      : await spillReplacement(text, totalBytes, ownerSessionId(exec), exec.name, exec.callId, 'result')
     if (replacedText === undefined) return decision
     const replaced: ContentBlock[] = [{ type: 'text', text: replacedText }]
     return { kind: 'accept', content: replaced, ...decision.additionalContexts ? { additionalContexts: decision.additionalContexts } : {} }

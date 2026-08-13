@@ -12,7 +12,7 @@ import type { DynamicCordisReference } from '@deepseek-ai/dsh-cordis-host-runner
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-session'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, jsonRenderer } from '@deepseek-ai/dsh-tools'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { missingServices, providedServices } from './inspect.ts'
@@ -49,7 +49,7 @@ export function apply(ctx: Context): void {
     parameters: {},
     output: {
       schema: { type: 'json' },
-      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+      render: jsonRenderer({ space: 2 }),
     },
     execute(_args, _exec): Promise<JsonValue> {
       return Promise.resolve({ providers: ctx.cordisInspect.list() } as unknown as JsonValue)
@@ -77,7 +77,7 @@ export function apply(ctx: Context): void {
     },
     output: {
       schema: { type: 'json' },
-      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+      render: jsonRenderer({ space: 2 }),
     },
     async execute(args, exec) {
       const data = await ctx.cordisInspect.query(
@@ -108,7 +108,7 @@ export function apply(ctx: Context): void {
     },
     output: {
       schema: { type: 'json' },
-      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+      render: jsonRenderer({ space: 2 }),
     },
     execute(args, exec): Promise<JsonValue> {
       const agent = requireAgent(exec)
